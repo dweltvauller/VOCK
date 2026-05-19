@@ -2,33 +2,36 @@
 """
 dict_lookup.py  —  Interactive MFA dictionary lookup
 
-Type a word to see its ARPAbet pronunciation(s).
-Type 'quit' or press Ctrl+C to exit.
+Type a word to see its ARPA/IPA pronunciation(s).
+Press Ctrl+C to exit.
 
 Usage:
-    python3 dict_lookup.py
-    python3 dict_lookup.py --dict /path/to/english_us_arpa.dict
-    python3 dict_lookup.py --custom-dict /path/to/custom.dict
+    python3 dict_lookup.py english_mfa
 """
 
 import argparse
 import os
 import re
 import sys
+import difflib
 from collections import defaultdict
 
-DEFAULT_DICT_PATHS = [
-    os.path.expanduser("~/Documents/MFA/pretrained_models/dictionary/english_us_arpa.dict"),
-    os.path.expanduser("~/.local/share/montreal-forced-aligner/pretrained_models/dictionary/english_us_arpa.dict"),
+# Search inside these directories for main dictionaries
+DEFAULT_DICT_DIRS = [
+    os.path.expanduser("~/Documents/MFA/pretrained_models/dictionary"),
+    os.path.expanduser("~/.local/share/montreal-forced-aligner/pretrained_models/dictionary"),
 ]
 
-
-def find_dict() -> str | None:
-    for path in DEFAULT_DICT_PATHS:
-        if os.path.isfile(path):
-            return path
-    return None
-
+def get_available_dicts() -> dict:
+    """Finds all .dict files in default MFA folders and returns a name -> path mapping."""
+    available = {}
+    for directory in DEFAULT_DICT_DIRS:
+        if os.path.isdir(directory):
+            for filename in os.listdir(directory):
+                if filename.endswith(".dict"):
+                    if filename not in available:
+                        available[filename] = os.path.join(directory, filename)
+    return available
 
 def load_dictionary(dict_path: str, tag: str = None) -> defaultdict:
     """Return {word: [(pronunciation, tag), ...]} with all variants."""
@@ -47,32 +50,47 @@ def load_dictionary(dict_path: str, tag: str = None) -> defaultdict:
             entries[word].append((pronunciation, tag))
     return entries
 
-
 def main():
     parser = argparse.ArgumentParser(description="Interactive MFA dictionary lookup")
-    parser.add_argument("--dict", default=None,
-        help="Path to the MFA dictionary file (auto-detected if not given)")
-    parser.add_argument("--custom-dict", default=None,
-        help="Path to custom pronunciation dictionary (default: custom.dict next to this script)")
+    parser.add_argument("dict_name", nargs="?", default=None,
+        help="Name of the dictionary to load (e.g., english_mfa)")
     args = parser.parse_args()
 
-    # Load main dictionary
-    dict_path = args.dict or find_dict()
-    if not dict_path:
-        sys.exit(
-            "Dictionary not found in default locations.\n"
-            "Pass --dict /path/to/english_us_arpa.dict"
-        )
-    if not os.path.isfile(dict_path):
-        sys.exit(f"Dictionary file not found: '{dict_path}'")
+    available_dicts = get_available_dicts()
+
+    if not args.dict_name:
+        print("Usage error: A dictionary name is required.\n")
+        print("Available dictionaries in default locations:")
+        if available_dicts:
+            for name in sorted(available_dicts.keys()):
+                print(f"  - {name.replace('.dict', '')}")
+        else:
+            print("  (No .dict files found in default MFA directories)")
+        sys.exit(1)
+
+    dict_input = args.dict_name
+    dict_name = dict_input if dict_input.endswith(".dict") else f"{dict_input}.dict"
+
+    if dict_name in available_dicts:
+        dict_path = available_dicts[dict_name]
+    elif os.path.isfile(dict_input):
+        dict_path = dict_input
+        dict_name = os.path.basename(dict_path)
+    else:
+        sys.exit(f"Error: Dictionary '{dict_name}' not found.")
 
     print(f"Loading dictionary from:\n  {dict_path}")
     entries = load_dictionary(dict_path)
     print(f"  {len(entries):,} words loaded.")
 
-    # Load custom dictionary if present
-    script_dir  = os.path.dirname(os.path.abspath(__file__))
-    custom_path = args.custom_dict or os.path.join(script_dir, "custom.dict")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    custom_folder = os.path.join(script_dir, "dictionaries")
+    if not os.path.isdir(custom_folder):
+        os.makedirs(custom_folder, exist_ok=True)
+
+    custom_dict_name = f"custom.{dict_name}"
+    custom_path = os.path.join(custom_folder, custom_dict_name)
+    
     if os.path.isfile(custom_path):
         print(f"\nLoading custom dictionary from:\n  {custom_path}")
         custom_entries = load_dictionary(custom_path, tag="custom")
@@ -81,21 +99,16 @@ def main():
                 p for p in entries.get(word, []) if p not in pronunciations
             ]
         print(f"  {len(custom_entries):,} custom word(s) loaded.")
-    else:
-        print(f"\n  (No custom.dict found — place one next to this script to extend the dictionary.)")
 
-    print("\nType a word to look it up. Type 'quit' to exit.\n")
+    print("\nType a word to look it up. Press Ctrl+C to exit.\n")
 
     while True:
         try:
             word = input("> ").strip().lower()
+            if not word:
+                continue
         except (EOFError, KeyboardInterrupt):
-            print()
-            break
-
-        if not word:
-            continue
-        if word in ("quit", "exit", "q"):
+            print("\nExiting.")
             break
 
         pronunciations = entries.get(word)
@@ -104,8 +117,10 @@ def main():
                 tag_str = f"  [custom]" if tag else ""
                 print(f"  {word}  ->  {pronunciation}{tag_str}")
         else:
-            print(f"  '{word}' not found — MFA will assign 'spn' (spoken noise)")
-
+            print(f"  '{word}' not found.")
+            suggestions = difflib.get_close_matches(word, entries.keys(), n=3, cutoff=0.6)
+            if suggestions:
+                print(f"  Did you mean: {', '.join(suggestions)}?")
 
 if __name__ == "__main__":
     main()
