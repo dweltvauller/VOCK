@@ -1,0 +1,49 @@
+# Fallout 2 LIP Phoneme Mapping Reference
+# Based on the table by Anchorite and Black_Electric
+# Format: [Code]: {ipa: [IPA], description: [Example], frame: [Frame]}
+# Note: Examples and phoneme mappings are optimized for General American English (GAE).
+# 0x0B (ʊər) is treated as the R-controlled vowel slot.
+# 0x0C (ɒ) is recognized as merged with ɑ/ɔ in GAE, often defaulting to ɑ.
+
+mappings:
+  0x00: {ipa: "—",    description: "silence/rest",    frame: 0}
+  0x01: {ipa: "i:",   description: "bee, lady",       frame: 3}
+  0x02: {ipa: "ɪ",    description: "busy, guild",     frame: 1}
+  0x03: {ipa: "eɪ",   description: "bay, they",       frame: 1}
+  0x04: {ipa: "e",    description: "end, bread",      frame: 3}
+  0x05: {ipa: "æ",    description: "cat, plaid",      frame: 1}
+  0x06: {ipa: "ɑ:",   description: "arm",             frame: 1}
+  0x07: {ipa: "ɔ:",   description: "paw, ball",       frame: 1}
+  0x08: {ipa: "oʊ",   description: "open, toe",       frame: 7}
+  0x09: {ipa: "ʊ",    description: "wolf, bush",      frame: 8}
+  0x0A: {ipa: "u:",   description: "dew, blue",       frame: 7}
+  0x0B: {ipa: "ʊəʳ",  description: "cure, tourist",   frame: 3}
+  0x0C: {ipa: "ɒ",    description: "slaw, fought",    frame: 1}
+  0x0D: {ipa: "ʌ",    description: "lug, blood",      frame: 8}
+  0x0E: {ipa: "aɪ",   description: "sky, night",      frame: 1}
+  0x0F: {ipa: "aʊ",   description: "now, shout",      frame: 7}
+  0x10: {ipa: "ɔɪ",   description: "join, boy",       frame: 7}
+  0x11: {ipa: "p",    description: "pin, dippy",      frame: 6}
+  0x12: {ipa: "b",    description: "bug, bubble",     frame: 6}
+  0x13: {ipa: "t",    description: "tip, matter",     frame: 2}
+  0x14: {ipa: "d",    description: "dad, add",        frame: 2}
+  0x15: {ipa: "k",    description: "cat, folk",       frame: 2}
+  0x16: {ipa: "g",    description: "gun, egg",        frame: 2}
+  0x17: {ipa: "f",    description: "fat, cliff",      frame: 4}
+  0x18: {ipa: "v",    description: "vine, five",      frame: 4}
+  0x19: {ipa: "θ",    description: "thongs",          frame: 5}
+  0x1A: {ipa: "ð",    description: "leather",         frame: 5}
+  0x1B: {ipa: "s",    description: "sit, less",       frame: 2}
+  0x1C: {ipa: "z",    description: "zed, buzz",       frame: 2}
+  0x1D: {ipa: "ʃ",    description: "sham, ocean",     frame: 2}
+  0x1E: {ipa: "ʒ",    description: "treasure, azure", frame: 2}
+  0x1F: {ipa: "h",    description: "hop, who",        frame: 2}
+  0x20: {ipa: "m",    description: "man, palm",       frame: 6}
+  0x21: {ipa: "n",    description: "net, funny",      frame: 2}
+  0x22: {ipa: "ŋ",    description: "ring, pink",      frame: 2}
+  0x23: {ipa: "l",    description: "live, well",      frame: 5}
+  0x24: {ipa: "w",    description: "wit, why",        frame: 8}
+  0x25: {ipa: "j",    description: "you, onion",      frame: 2}
+  0x26: {ipa: "r",    description: "run, carrot",     frame: 2}
+  0x27: {ipa: "tʃ",   description: "chip, watch",     frame: 2}
+  0x28: {ipa: "dʒ",   description: "jam, wage",       frame: 2}
