@@ -1,12 +1,15 @@
 # Generated output folders — contain game assets, do not commit
-audio/
-wav/
 acm/
-txt/
-lip/
-textgrid/
-msg/
+audio/
 dat/
+lip/
+msg/
+textgrid/
+txt/
+wav/
+
+# Unknown words file
+unknown.txt
 
 # snd2acm binary — download separately
 snd2acm.exe
