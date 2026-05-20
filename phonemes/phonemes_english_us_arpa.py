@@ -7,7 +7,7 @@ The engine supports 41 distinct mouth-shape codes mapped to .FRM frames.
 ARPAbet stress digits (0, 1, 2) are stripped before lookup.
 """
 
-ARPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Vowels ────────────────────────────────────────────────────────────────
     "IY":  0x01,  # fleece  i:      bee, lady
     "IH":  0x02,  # kit     ɪ       busy, guild
@@ -67,13 +67,3 @@ ARPA_TO_LIP: dict[str, int] = {
     "SPN": 0x00,  # spoken noise
     "":    0x00,
 }
-
-
-def arpa_to_lip_code(phoneme: str) -> int:
-    """
-    Strip stress digit and return the Fallout 2 LIP code for an ARPAbet phoneme.
-    Falls back to 0x0D (ʌ, open mouth shape) for unknown symbols.
-    """
-    import re
-    p = re.sub(r"\d", "", phoneme.strip().upper())
-    return ARPA_TO_LIP.get(p, 0x0D)

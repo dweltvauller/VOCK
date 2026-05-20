@@ -7,7 +7,7 @@ Associa os símbolos IPA do português aos 41 códigos de forma da boca.
 Os marcadores IPA (acento, comprimento) são removidos antes da busca.
 """
 
-PORTUGUESE_IPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Vogais Orais ───────────────────────────────────────────────────────────
     "i":   0x01,  # i (vida)
     "e":   0x04,  # ê (você)
@@ -60,12 +60,3 @@ PORTUGUESE_IPA_TO_LIP: dict[str, int] = {
     "spn": 0x00,
     "":    0x00,
 }
-
-def ipa_to_lip_code(phoneme: str) -> int:
-    """
-    Remove marcadores IPA e retorna o código LIP de Fallout 2.
-    """
-    import re
-    # Remove marcadores de comprimento (ː), estresse (ˈ, ˌ) e ligaduras
-    p = re.sub(r"[ːˈˌ]", "", phoneme.strip().lower())
-    return PORTUGUESE_IPA_TO_LIP.get(p, 0x0D)

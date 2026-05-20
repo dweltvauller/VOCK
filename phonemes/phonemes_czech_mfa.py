@@ -7,7 +7,7 @@ Mapuje symboly IPA češtiny na 41 kódů tvarů úst.
 Značky IPA (stres, délka) jsou před vyhledáváním odstraněny.
 """
 
-CZECH_IPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Samohlásky ─────────────────────────────────────────────────────────────
     "a":   0x06,  # a (auto)
     "aː":  0x06,  # á (dáma)
@@ -58,12 +58,3 @@ CZECH_IPA_TO_LIP: dict[str, int] = {
     "spn": 0x00,
     "":    0x00,
 }
-
-def ipa_to_lip_code(phoneme: str) -> int:
-    """
-    Odstraní značky IPA a vrátí kód Fallout 2 LIP.
-    """
-    import re
-    # Odstraní značky délky (ː), stresu (ˈ, ˌ) a spojovníky
-    p = re.sub(r"[ːˈˌ]", "", phoneme.strip().lower())
-    return CZECH_IPA_TO_LIP.get(p, 0x0D)

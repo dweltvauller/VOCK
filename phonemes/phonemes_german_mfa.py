@@ -7,7 +7,7 @@ Ordnet deutsche IPA-Symbole den 41 Mundform-Codes zu.
 IPA-Marker (Betonung, Länge) werden vor der Suche entfernt.
 """
 
-GERMAN_IPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Vokale ────────────────────────────────────────────────────────────────
     "iː":  0x01,  # i (Riese)
     "ɪ":   0x02,  # i (mit)
@@ -61,12 +61,3 @@ GERMAN_IPA_TO_LIP: dict[str, int] = {
     "spn": 0x00,
     "":    0x00,
 }
-
-def ipa_to_lip_code(phoneme: str) -> int:
-    """
-    Entfernt IPA-Marker und gibt den Fallout 2 LIP Code zurück.
-    """
-    import re
-    # Entfernt Längenzeichen (ː), Betonung (ˈ, ˌ) und Bindungen
-    p = re.sub(r"[ːˈˌ]", "", phoneme.strip().lower())
-    return GERMAN_IPA_TO_LIP.get(p, 0x0D)

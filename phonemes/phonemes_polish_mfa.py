@@ -7,7 +7,7 @@ Mapuje polskie symbole IPA na 41 kodów kształtu ust.
 Znaczniki IPA (akcent, długość) są usuwane przed wyszukiwaniem.
 """
 
-POLISH_IPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Samogłoski ─────────────────────────────────────────────────────────────
     "i":   0x01,  # i (iść)
     "ɨ":   0x09,  # y (syn)
@@ -64,12 +64,3 @@ POLISH_IPA_TO_LIP: dict[str, int] = {
     "spn": 0x00,
     "":    0x00,
 }
-
-def ipa_to_lip_code(phoneme: str) -> int:
-    """
-    Usuwa znaczniki IPA i zwraca kod Fallout 2 LIP.
-    """
-    import re
-    # Usuwa znaczniki długości (ː), akcentu (ˈ, ˌ) i inne diakrytyki
-    p = re.sub(r"[ːˈˌ]", "", phoneme.strip().lower())
-    return POLISH_IPA_TO_LIP.get(p, 0x0D)

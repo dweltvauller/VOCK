@@ -7,7 +7,7 @@ phonemes_russian_mfa.py  ─  IPA → Коды LIP Fallout 2
 Маркеры ударения (ˈ, ˌ) и долготы (ː) из MFA удаляются перед поиском.
 """
 
-RUSSIAN_IPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Гласные ────────────────────────────────────────────────────────────────
     "a":   0x06,  # а (арбуз)
     "i":   0x01,  # и (ива)
@@ -56,13 +56,3 @@ RUSSIAN_IPA_TO_LIP: dict[str, int] = {
     "spn": 0x00,  # речевой шум
     "":    0x00,
 }
-
-def ipa_to_lip_code(phoneme: str) -> int:
-    """
-    Удаляет маркеры IPA и возвращает код LIP Fallout 2.
-    Использует 0x0D (ʌ) как значение по умолчанию для неизвестных символов.
-    """
-    import re
-    # Удаляет ударение (ˈ), вторичное ударение (ˌ) и маркеры долготы (ː)
-    p = re.sub(r"[ˈˌː]", "", phoneme.strip().lower())
-    return RUSSIAN_IPA_TO_LIP.get(p, 0x0D)

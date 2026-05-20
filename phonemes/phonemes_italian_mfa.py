@@ -7,7 +7,7 @@ Associa i simboli IPA dell'italiano ai 41 codici di forma della bocca.
 I marcatori IPA (accento, lunghezza) vengono rimossi prima della ricerca.
 """
 
-ITALIAN_IPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Vocali ────────────────────────────────────────────────────────────────
     "i":   0x01,  # i (vino)
     "e":   0x04,  # é (pesca)
@@ -53,12 +53,3 @@ ITALIAN_IPA_TO_LIP: dict[str, int] = {
     "spn": 0x00,
     "":    0x00,
 }
-
-def ipa_to_lip_code(phoneme: str) -> int:
-    """
-    Rimuove i marcatori IPA e restituisce il codice LIP di Fallout 2.
-    """
-    import re
-    # Rimuove marcatori di lunghezza (ː), stress (ˈ, ˌ) e legature
-    p = re.sub(r"[ːˈˌ]", "", phoneme.strip().lower())
-    return ITALIAN_IPA_TO_LIP.get(p, 0x0D)

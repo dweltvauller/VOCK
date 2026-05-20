@@ -7,7 +7,7 @@ Mapea símbolos IPA estándar del español a los 41 códigos de forma de boca.
 Los marcadores de estrés (ˈ, ˌ) y longitud (ː) del MFA se eliminan antes de la búsqueda.
 """
 
-SPANISH_IPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Vocales ────────────────────────────────────────────────────────────────
     "i":   0x01,  # i:      sí
     "e":   0x04,  # e       mes
@@ -60,13 +60,3 @@ SPANISH_IPA_TO_LIP: dict[str, int] = {
     "spn": 0x00,  # ruido hablado
     "":    0x00,
 }
-
-def ipa_to_lip_code(phoneme: str) -> int:
-    """
-    Elimina marcadores de IPA y devuelve el código LIP de Fallout 2.
-    Usa 0x0D como valor predeterminado si el símbolo es desconocido.
-    """
-    import re
-    # Elimina estrés primario (ˈ), secundario (ˌ) y marcas de longitud (ː)
-    p = re.sub(r"[ˈˌː]", "", phoneme.strip().lower())
-    return SPANISH_IPA_TO_LIP.get(p, 0x0D)

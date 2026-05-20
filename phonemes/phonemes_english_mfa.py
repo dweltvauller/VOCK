@@ -7,7 +7,7 @@ Maps standard English IPA symbols to the 41 distinct mouth-shape codes.
 MFA IPA stress markers (ˈ, ˌ) and length marks (ː) are stripped before lookup.
 """
 
-ENGLISH_IPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Vowels ────────────────────────────────────────────────────────────────
     "i":   0x01,  # fleece  i:      bee, lady
     "ɪ":   0x02,  # kit     ɪ       busy, guild
@@ -76,13 +76,3 @@ ENGLISH_IPA_TO_LIP: dict[str, int] = {
     "spn": 0x00,  # spoken noise
     "":    0x00,
 }
-
-def ipa_to_lip_code(phoneme: str) -> int:
-    """
-    Strip IPA stress/length markers and return the Fallout 2 LIP code.
-    Falls back to 0x0D (ʌ, open mouth shape) for unknown symbols.
-    """
-    import re
-    # Remove primary stress (ˈ), secondary stress (ˌ), and length marks (ː)
-    p = re.sub(r"[ˈˌː]", "", phoneme.strip().lower())
-    return ENGLISH_IPA_TO_LIP.get(p, 0x0D)

@@ -7,7 +7,7 @@ A magyar IPA szimbólumokat a 41 szájforma-kódhoz rendeli.
 Az IPA jelölések (hangsúly, hosszúság) a keresés előtt eltávolításra kerülnek.
 """
 
-HUNGARIAN_IPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Magánhangzók ──────────────────────────────────────────────────────────
     "i":   0x01,  # i (ír)
     "iː":  0x01,  # í (díj)
@@ -63,12 +63,3 @@ HUNGARIAN_IPA_TO_LIP: dict[str, int] = {
     "spn": 0x00,
     "":    0x00,
 }
-
-def ipa_to_lip_code(phoneme: str) -> int:
-    """
-    Eltávolítja az IPA jelöléseket és visszaadja a Fallout 2 LIP kódot.
-    """
-    import re
-    # Eltávolítja a hosszúsági (ː), hangsúly (ˈ, ˌ) jelöléseket és egyéb diakritikusokat
-    p = re.sub(r"[ːˈˌ]", "", phoneme.strip().lower())
-    return HUNGARIAN_IPA_TO_LIP.get(p, 0x0D)

@@ -1,8 +1,6 @@
 # V.O.C.K. — Vocal Output Creation Kit
 
-A Python script that automates the complete voice modding pipeline for Fallout 2.
-Give it `.msg` dialogue file(s) and a folder of audio files — it produces a
-ready-to-install `vock.dat` containing ACM audio, LIP sync, and dialogue files.
+A Python script that automates the complete voice modding pipeline for Fallout 2. Give it `.msg` dialogue file(s) and a folder of audio files — it produces a ready-to-install `vock.dat` containing ACM audio, LIP sync, and dialogue files.
 
 ## What it does
 
@@ -18,23 +16,43 @@ ready-to-install `vock.dat` containing ACM audio, LIP sync, and dialogue files.
 
 ## Folder structure
 
+All folders are created automatically or configured via `config.py`.
+
 ```
 vock/
 ├── vock.py
-├── dict_lookup.py        ← interactive MFA dictionary lookup tool
-├── snd2acm.exe           ← download separately (see Requirements)
-├── custom.dict           ← optional: custom pronunciations for game-specific words
+├── config.py             ← Global settings and paths
+├── dictionaries/         ← custom.<language>.dict files
+├── phonemes/             ← Phoneme mapping tables
 ├── msg/                  ← put your .MSG file(s) here
 ├── audio/                ← put your audio files here (MP3, WAV, FLAC, M4A, …)
-├── txt/                  ← generated + editable: one .txt per audio line
-├── wav/                  ← generated: 22050 Hz mono 16-bit PCM (ready for ACM/MFA)
+├── txt/                  ← generated/editable: one .txt per audio line
+├── wav/                  ← generated: 22050 Hz mono 16-bit PCM
 ├── acm/                  ← generated: Fallout 2 ACM audio files
 ├── textgrid/             ← generated: MFA alignment TextGrid files
-│   └── unknown_words.txt ← generated: words MFA could not align (after mfa step)
 ├── lip/                  ← generated: Fallout 2 LIP files
+├── unknown.txt           ← generated: words not recognized by dictionary
 └── dat/
     └── vock.dat          ← generated: ready-to-install Fallout 2 DAT archive
 ```
+
+## Supported Languages
+
+V.O.C.K. supports multiple languages configured via config.py or by using the `--language` flag. If an NPC speaks multiple languages (e.g., Spanglish), the recommendation is to use the dominant language and add any non-dominant words to the custom dictionary.
+
+- arpabet
+- english
+- spanish
+- russian
+- french
+- german
+- czech
+- hungarian
+- italian
+- polish
+- portuguese
+
+Note: [ARPAbet](https://en.wikipedia.org/wiki/ARPABET) is a unique, English-specific set of phonetic transcription codes and currently features the largest dictionary. All other language options provided (english, spanish, russian, etc.) utilize the standard [International Phonetic Alphabet](https://en.wikipedia.org/wiki/International_Phonetic_Alphabet) models via MFA.
 
 ## Pipeline steps
 
@@ -46,10 +64,6 @@ vock/
 | `mfa` | `wav/` + `txt/`    | `textgrid/`    | MFA forced alignment → phoneme timing            |
 | `lip` | `textgrid/`+`txt/` | `lip/*.lip`    | Generate Fallout 2 LIP binary files              |
 | `dat` | `msg/`+`acm/`+…    | `dat/vock.dat` | Pack everything into a Fallout 2 DAT2 archive    |
-
-The `lip` step **prioritises MFA TextGrid data** for accurate phoneme timing but
-automatically falls back to a text-based phoneme approximation (letter-to-phoneme
-mapping) if no TextGrid is available for a given file.
 
 ## Output DAT structure
 
@@ -121,9 +135,13 @@ conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 conda create -n aligner -c conda-forge montreal-forced-aligner python=3.10 -y
 conda activate aligner
 
-# Download models
+# Download models for ARPAbet
 mfa model download acoustic   english_us_arpa
 mfa model download dictionary english_us_arpa
+
+# Download models for other languages, where <language> = spanish, english, etc.
+mfa model download acoustic   <language>_mfa
+mfa model download dictionary <language>_mfa
 ```
 
 ## Usage
@@ -131,7 +149,10 @@ mfa model download dictionary english_us_arpa
 ### Full pipeline (with MFA alignment)
 
 ```bash
+# Activate your MFA environment
 conda activate aligner
+
+# Run the full pipeline
 python3 vock.py
 ```
 
@@ -166,24 +187,6 @@ python3 vock.py --skip acm
 
 # Skip both MFA and ACM (minimal dependencies: only ffmpeg required)
 python3 vock.py --skip mfa acm
-```
-
-### Audio options
-
-```bash
-# Disable EBU R128 loudness normalisation
-python3 vock.py --no-norm
-
-# Set a custom loudness target (e.g. slightly quieter than the default -16 LUFS)
-python3 vock.py --lufs -18.0
-```
-
-### Custom paths
-
-```bash
-python3 vock.py --audiodir /path/to/my/audio/
-python3 vock.py --datfile dat/patch.dat
-python3 vock.py --msgdir /path/to/msg/
 ```
 
 ## Manual text-correction workflow (human-in-the-loop)
@@ -235,17 +238,15 @@ If you run `python3 vock.py` again after editing a `.txt` file, the `msg` step
 will notice the existing file differs from the MSG source and print
 `[kept manual edit]` — your correction is safe.
 
-## Dictionary lookup
+## Dictionary Lookup
 
-`dict_lookup.py` is a standalone interactive tool that lets you check whether a
-word is known to MFA before committing it to a `.txt` file. It also loads the
-`custom.dict`. The custom words are flagged with `[custom]`.
+`dict_lookup.py` is a standalone interactive tool that lets you check whether a word is known to MFA before committing it to a `.txt` file. It also loads the custom dictionary if available. The custom words are flagged with `[custom]`.
 
 ```bash
-python3 dict_lookup.py
+python3 dict_lookup.py english_us_arpa
 ```
 
-Type words at the prompt to see their ARPAbet pronunciation(s):
+Type words at the prompt to see their pronunciation(s):
 
 ```
 > geck
@@ -259,119 +260,84 @@ Type words at the prompt to see their ARPAbet pronunciation(s):
   'customword' not found — MFA will assign 'spn' (spoken noise)
 ```
 
-Words not found need either a manual text edit or a `custom.dict` entry.
+Words not found need either a manual text edit or a custom dictionary entry.
 
-## Custom pronunciation dictionary
+## Custom Dictionary
 
-Game-specific words like `geck`, `mynoc`, `tribals`, or `hassleful` are not in
-MFA's English dictionary. You can teach MFA how to pronounce them by creating a
-`custom.dict` file next to `vock.py`.
+If MFA fails to align specific game nouns (e.g., `GECK`, `Arroyo`), add them to the dictionary file corresponding to your language (e.g., `dictionaries/custom.english_us_arpa.dict`).
 
-The format is one word per line, followed by its ARPAbet pronunciation:
+The format is one word per line, followed by its phoneme pronunciation:
 
 ```
+# ARPAbet
 geck G EH1 K
 mynoc M IH1 N AH0 K
 tribals T R AY1 B AH0 L Z
 hassleful HH AE1 S AH0 L F AH0 L
+
+# IPA
+geck ɡ ɛ k
+mynoc m ɪ n ə k
+tribals t ɹ aj b ə l z
+hassleful h æ s ə l f ə l
 ```
 
-`vock.py` automatically detects `custom.dict` and merges it with the main MFA
-dictionary before running alignment. You will see a confirmation line in the
-console:
+`vock.py` automatically detects the custom dictionary and merges it with the main MFA dictionary before running alignment.
 
-```
-  Using custom dictionary: custom.dict
-```
-
-Use `--custom-dict /path/to/file` to point to a different location.
-
-After each MFA run, `textgrid/unknown_words.txt` is written listing every word
-MFA assigned `spn` (spoken noise) to — meaning it could not align it. Use this
-file to identify candidates for `custom.dict` or `.txt` corrections:
+After running the `mfa` step, check `unknown.txt` for a list of words that were assigned as "spoken noise" (`spn`). Use this file to identify missing custom dictionary entries:
 
 ```
 Unknown words (MFA assigned 'spn')
-3 occurrence(s) in 2 file(s).
-Add pronunciations for these words to custom.dict
-and re-run --steps mfa lip dat
+23 occurrence(s) in 14 file(s).
+Add pronunciations for these words to your custom dictionary
+(dictionaries/custom.<mfa_name>.dict) and re-run --steps mfa lip dat
 
-SAL1.txt
-  geck                  1.96s – 2.20s
+SALLY1.txt
+  dunton        1.98s – 2.54s
+  hmm           2.70s – 3.10s
 
-MOR2.txt
-  mynoc                 0.07s – 0.38s
+SALLY2.txt
+  idjit         2.82s – 3.35s
+  shoo          8.36s – 8.97s
+  shoo          8.97s – 9.17s
 ```
 
 Typical causes of unknown words:
 
-- **Game-specific nouns** — `geck`, `mynoc`, `brahmin`, `arroyo` → add to `custom.dict`
+- **Game-specific nouns** — `geck`, `mynoc`, `brahmin`, `arroyo` → add to the custom dictionary.
+- **Non-standard words** — `hassleful`, `tribals` → add to the custom dictionary. 
 - **Numbers** — `$55`, `125` → edit the `.txt` file to the spoken form (`fifty five dollars`, `one hundred twenty five`)
-- **Stage directions** — `[chuckle]`, `[Player Name]` → remove or replace in the `.txt` file
-- **Non-standard words** — `hassleful`, `tribals` → add to `custom.dict`
+- **Stage directions** — `(chuckle)`, `[Player Name]` → remove or replace in the `.txt` file.
 
-## All CLI options
-
-```
---msgdir DIR          Folder containing .MSG file(s) (default: msg)
---audiodir DIR     Audio input folder; any format supported (default: audio)
---txtdir DIR       TXT output/edit folder (default: txt)
---wavdir DIR       Standardised WAV output folder (default: wav)
---acmdir DIR       ACM output folder (default: acm)
---textgriddir DIR  TextGrid output folder (default: textgrid)
---lipdir DIR       LIP output folder (default: lip)
---datfile PATH     Output DAT path (default: dat/vock.dat)
---snd2acm PATH     Explicit path to snd2acm.exe
---mfa-env NAME     Conda env with MFA installed (default: aligner)
---custom-dict PATH Custom pronunciation dictionary (default: custom.dict)
---lufs FLOAT       Target loudness in LUFS (default: -16.0)
---no-norm          Skip EBU R128 loudness normalisation
---steps STEP ...   Run ONLY these steps
---skip  STEP ...   Skip these steps from the full pipeline
-```
-
-Available steps: `msg`  `wav`  `acm`  `mfa`  `lip`  `dat`
+## Custom Configuration
+All global settings, file paths, and environment configurations are managed in `config.py`. You can adjust these values to suit your specific project setup or system environment:
+- PATHS: Defines the location of your input/output folders and the path to your snd2acm.exe executable.
+- SETTINGS:
+  - mfa_env: The name of the conda environment where MFA is installed (default: aligner).
+  - lufs: The target loudness for audio normalization (default: -16).
+  - no_norm: Set to True to disable automatic audio loudness normalization.
+- LANGUAGE: Sets the default language/phoneme set used by the pipeline if no --language flag is provided.
 
 ## Notes
 
-- **Universal audio input.** The `wav` step accepts MP3, WAV, FLAC, M4A, AAC,
-  OGG, Opus, WMA — any format FFmpeg can decode. Duration is always read via
-  `ffprobe` for accuracy across all containers.
-- **TXT validation.** During the `wav` step, audio files without a matching
-  `.txt` file are skipped with a clear warning. This prevents untagged or
-  misnamed audio from silently entering the pipeline.
-- **Loudness normalisation.** Audio is normalised to −16 LUFS (EBU R128) during
-  the `wav` step to match original Fallout 2 game files. Use `--no-norm` to
-  disable or `--lufs` to change the target.
-- **MFA fallback.** If MFA fails on a file, that file automatically falls back to
-  text-based phoneme approximation. The rest of the batch continues normally.
-- **ACM files are optional in the DAT.** If you run with `--skip acm`, the DAT
-  still contains LIP and TXT files.
-- **Dependency fast-fail.** The script checks for `ffmpeg`, `ffprobe`, `conda`,
-  and `snd2acm.exe` before starting and exits with a clear install message if
-  anything required for the chosen steps is missing.
-- **snd2acm on Linux.** Install Wine and the script automatically invokes
-  `snd2acm.exe` through Wine.
-- **Custom dictionary.** Place `custom.dict` next to `vock.py` to add
-  pronunciations for game-specific words. It is merged with the main MFA
-  dictionary at runtime — no manual dictionary editing required.
-- **Unknown words report.** After every MFA run, `textgrid/unknown_words.txt`
-  lists every word MFA could not align, grouped by file with timestamps.
-  Use it to build up `custom.dict` or fix `.txt` files before re-running.
+- **Universal audio input.** The `wav` step accepts MP3, WAV, FLAC, M4A, AAC, OGG, Opus, WMA — any format FFmpeg can decode. Duration is always read via `ffprobe` for accuracy across all containers.
+- **TXT validation.** During the `wav` step, audio files without a matching `.txt` file are skipped with a clear warning. This prevents untagged or misnamed audio from silently entering the pipeline.
+- **Loudness normalisation.** Audio is normalised to −16 LUFS (EBU R128) during the `wav` step to match original Fallout 2 game files. Can be configured via `config.py`.
+- **Dependency fast-fail.** The script checks for `ffmpeg`, `ffprobe`, `conda`, and `snd2acm.exe` before starting and exits with a clear install message if anything required for the chosen steps is missing.
 
 ## LIP file format
 
-The LIP binary format was reverse-engineered from Black_Electric's LIPS.py and
-validated against LIP Editor. Key constants:
+The LIP binary format was reverse-engineered from Black_Electric's LIPS.py and validated against LIP Editor. Key constants:
 
 - Version: `0x00000002`
 - Unknown constant at `0x04`: `0x00005800`
 - Sample offset formula: `round(seconds × 2 × 22050)`
 - ACM filename field: 8 bytes, uppercase, null-padded, followed by `VOC\0`
 
+Format documented at https://fodev.net/files/fo2/lip.html
+
 ## DAT file format
 
-Uses the Fallout 2 DAT2 format (little-endian). Files are stored uncompressed.
 Format documented at https://fodev.net/files/fo2/dat.html
 
 ## How to obtain the MSG file
@@ -410,5 +376,3 @@ Copy the specific `.MSG` file you want to edit into `vock/msg/`.
 ## Other useful tools
 
 - LIP Editor: https://fodev.net/files/mirrors/teamx-utils/LIPEditor0.96b.rar
-- `dict_lookup.py` — included in this repo; interactive MFA dictionary lookup
-- MFA documentation: https://montreal-forced-aligner.readthedocs.io

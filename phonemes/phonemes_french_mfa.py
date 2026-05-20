@@ -7,7 +7,7 @@ Associe les symboles IPA du français aux 41 codes de forme de bouche.
 Les marqueurs IPA (accent, longueur) sont supprimés avant la recherche.
 """
 
-FRENCH_IPA_TO_LIP: dict[str, int] = {
+PHONEME_TABLE: dict[str, int] = {
     # ── Voyelles orales ────────────────────────────────────────────────────────
     "i":   0x01,  # i (rire)
     "e":   0x04,  # é (été)
@@ -60,12 +60,3 @@ FRENCH_IPA_TO_LIP: dict[str, int] = {
     "spn": 0x00,
     "":    0x00,
 }
-
-def ipa_to_lip_code(phoneme: str) -> int:
-    """
-    Supprime les marqueurs IPA et renvoie le code LIP Fallout 2.
-    """
-    import re
-    # Supprime les marqueurs de longueur (ː), accent (ˈ, ˌ) et autres diacritiques
-    p = re.sub(r"[ːˈˌ]", "", phoneme.strip().lower())
-    return FRENCH_IPA_TO_LIP.get(p, 0x0D)

@@ -12,7 +12,7 @@ PIPELINE
   audio ──────[ffmpeg normalize + encode]───► wav  (22050 Hz mono 16-bit)
   wav ────────[snd2acm / wine]──────────────► acm
   wav + txt ──[MFA]─────────────────────────► textgrid
-  textgrid (or txt fallback) ───────────────► lip
+  textgrid ─────────────────────────────────► lip
   msg + acm + lip + txt ────────────────────► dat/vock.dat
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -26,6 +26,7 @@ FOLDER STRUCTURE (all created automatically)
   ./acm/          ← generated: Fallout 2 ACM files
   ./textgrid/     ← generated: MFA TextGrid files
   ./lip/          ← generated: Fallout 2 LIP files
+  ./unknown.txt   ← generated: words not recognized by the dictionary
   ./dat/vock.dat  ← generated: ready-to-install Fallout 2 DAT archive
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -36,7 +37,7 @@ STEPS  (run with --steps or skip with --skip)
   wav   Convert audio/ → standardised 22050 Hz mono 16-bit in wav/
   acm   wav/ → ACM via snd2acm.exe
   mfa   MFA forced alignment → textgrid/
-  lip   textgrid/ (or txt/ fallback) → lip/
+  lip   textgrid/ → lip/
   dat   Pack msg/ + acm/ + lip/ + txt/ → dat/vock.dat
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -55,23 +56,38 @@ USAGE
   # Rebuild just the DAT:
   python3 vock.py --steps dat
 
-  # Skip MFA (no conda needed, text approximation only):
-  python3 vock.py --skip mfa
-
   # Skip ACM generation (no snd2acm needed):
   python3 vock.py --skip acm
 
-  # Full options:
-  python3 vock.py [--msgdir DIR] [--audiodir DIR] [--txtdir DIR]
-                  [--wavdir DIR] [--acmdir DIR] [--textgriddir DIR]
-                  [--lipdir DIR] [--datfile PATH]
-                  [--snd2acm PATH] [--mfa-env NAME]
-                  [--lufs FLOAT] [--no-norm]
-                  [--steps STEP [STEP ...]]
-                  [--skip  STEP [STEP ...]]
+  # Change language:
+  python3 vock.py --language spanish
+
+  # All CLI options:
+  python3 vock.py [--language LANG] [--steps STEP [STEP ...]] [--skip STEP [STEP ...]]
+
+  All paths and settings are configured in config.py.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SUPPORTED LANGUAGES  (--language)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  arpabet   english_us_arpa   dictionaries/custom.english_us_arpa.dict
+  english   english_mfa       dictionaries/custom.english_mfa.dict
+  spanish   spanish_mfa       dictionaries/custom.spanish_mfa.dict
+  russian   russian_mfa       dictionaries/custom.russian_mfa.dict
+  german    german_mfa        dictionaries/custom.german_mfa.dict
+  italian   italian_mfa       dictionaries/custom.italian_mfa.dict
+  french    french_mfa        dictionaries/custom.french_mfa.dict
+  hungarian hungarian_mfa     dictionaries/custom.hungarian_mfa.dict
+  polish    polish_mfa        dictionaries/custom.polish_mfa.dict
+  portuguese portuguese_mfa   dictionaries/custom.portuguese_mfa.dict
+
+  Phoneme maps are loaded from ./phonemes/phonemes_<mfa_name>.py
+  Each file must export exactly one dict named PHONEME_TABLE.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -79,8 +95,94 @@ import shutil
 import struct
 import subprocess
 import sys
+import config
 
-# ─── Pipeline step order ──────────────────────────────────────────────────────
+# ─── Language configuration ───────────────────────────────────────────────────
+
+#: Maps --language value → MFA model/dictionary name
+LANGUAGE_CONFIG: dict[str, str] = {
+    "arpabet":    "english_us_arpa",
+    "english":    "english_mfa",
+    "spanish":    "spanish_mfa",
+    "russian":    "russian_mfa",
+    "german":     "german_mfa",
+    "italian":    "italian_mfa",
+    "french":     "french_mfa",
+    "hungarian":  "hungarian_mfa",
+    "polish":     "polish_mfa",
+    "portuguese": "portuguese_mfa",
+}
+
+def load_phoneme_module(mfa_name: str):
+    """
+    Dynamically import ./phonemes/phonemes_<mfa_name>.py and return the module.
+    Exits with an error if the file does not exist.
+    """
+    script_dir  = os.path.dirname(os.path.abspath(__file__))
+    module_path = os.path.join(script_dir, "phonemes", f"phonemes_{mfa_name}.py")
+    if not os.path.isfile(module_path):
+        sys.exit(f"\n[ERROR] Phoneme file not found: {module_path}\n"
+                 f"Cannot proceed without a valid phoneme mapping for {mfa_name}.")
+    spec   = importlib.util.spec_from_file_location(f"phonemes_{mfa_name}", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def make_phoneme_converter(mfa_name: str, module) -> callable:
+    """
+    Return a ``(str) -> int`` callable for the given MFA model.
+
+    Every phoneme file must export a dict named PHONEME_TABLE.
+    The stripping/normalisation logic lives here, not in the phoneme files.
+
+    ARPAbet (english_us_arpa):
+      Strip trailing stress digits (0/1/2), upper-case, look up in PHONEME_TABLE.
+
+    IPA-based models (everything else):
+      Strip MFA stress markers (ˈ ˌ) and length mark (ː), lower-case,
+      look up in PHONEME_TABLE.
+
+    Falls back to 0x0D (open-mouth shape) for unknown symbols in both cases.
+    """
+    if not hasattr(module, "PHONEME_TABLE"):
+        sys.exit(f"\n[ERROR] phonemes_{mfa_name}.py must export a dict named PHONEME_TABLE.")
+
+    table    = module.PHONEME_TABLE
+    FALLBACK = 0x0D
+
+    if mfa_name == "english_us_arpa":
+        def _convert(phoneme: str) -> int:
+            p = re.sub(r"\d", "", phoneme.strip().upper())
+            return table.get(p, FALLBACK)
+    else:
+        def _convert(phoneme: str) -> int:
+            p = re.sub(r"[ˈˌː]", "", phoneme.strip().lower())
+            return table.get(p, FALLBACK)
+
+    return _convert
+
+def resolve_custom_dict(mfa_name: str, explicit_path: str | None) -> str | None:
+    """
+    Return the path for the language-specific custom dictionary, or *explicit_path*
+    if the caller supplied one.  Returns None when no file exists.
+    """
+    if explicit_path:
+        return explicit_path
+    script_dir  = os.path.dirname(os.path.abspath(__file__))
+    candidate   = os.path.join(script_dir, "dictionaries", f"custom.{mfa_name}.dict")
+    return candidate if os.path.isfile(candidate) else None
+
+def resolve_mfa_dict_paths(mfa_name: str) -> list[str]:
+    """Return the default MFA pretrained dictionary search paths for *mfa_name*."""
+    return [
+        os.path.expanduser(
+            f"~/Documents/MFA/pretrained_models/dictionary/{mfa_name}.dict"),
+        os.path.expanduser(
+            f"~/.local/share/montreal-forced-aligner/pretrained_models/dictionary/{mfa_name}.dict"),
+    ]
+
+
 
 ALL_STEPS = ["msg", "wav", "acm", "mfa", "lip", "dat"]
 
@@ -91,69 +193,6 @@ LIP_UNKNOWN     = 0x00005800
 LIP_SAMPLE_RATE = 22050
 LIP_MULTIPLIER  = 2   # offset = seconds × 2 × 22050
 
-# ─── ARPAbet → Fallout LIP phoneme code ──────────────────────────────────────
-
-ARPA_TO_LIP = {
-    "AA": 0x0A, "AE": 0x02, "AH": 0x0E, "AO": 0x03,
-    "AW": 0x0C, "AY": 0x01, "EH": 0x06, "ER": 0x07,
-    "EY": 0x0B, "IH": 0x08, "IY": 0x09, "OW": 0x04,
-    "OY": 0x0D, "UH": 0x0E, "UW": 0x05,
-    "B":  0x10, "CH": 0x13, "D":  0x11, "DH": 0x13,
-    "F":  0x13, "G":  0x11, "HH": 0x0F, "JH": 0x13,
-    "K":  0x11, "L":  0x12, "M":  0x10, "N":  0x11,
-    "NG": 0x11, "P":  0x10, "R":  0x12, "S":  0x13,
-    "SH": 0x13, "T":  0x11, "TH": 0x13, "V":  0x13,
-    "W":  0x12, "Y":  0x12, "Z":  0x13, "ZH": 0x13,
-    "SIL": 0x00, "SP": 0x00, "": 0x00,
-}
-
-def arpa_to_lip_code(phoneme: str) -> int:
-    p = re.sub(r"\d", "", phoneme.strip().upper())
-    return ARPA_TO_LIP.get(p, 0x0E)
-
-# ─── Text-fallback phoneme tables ────────────────────────────────────────────
-
-LETTER_TO_LIP = {
-    'a': 0x0A, 'e': 0x06, 'i': 0x08, 'o': 0x04, 'u': 0x05,
-    'b': 0x10, 'p': 0x10, 'm': 0x10,
-    'd': 0x11, 't': 0x11, 'n': 0x11, 'g': 0x11, 'k': 0x11, 'c': 0x11,
-    'l': 0x12, 'r': 0x12, 'w': 0x12, 'y': 0x12,
-    's': 0x13, 'z': 0x13, 'f': 0x13, 'v': 0x13,
-    'j': 0x13, 'q': 0x11, 'x': 0x13, 'h': 0x0F,
-}
-DIGRAPH_TO_LIP = {
-    'sh': 0x13, 'ch': 0x13, 'th': 0x13, 'dh': 0x13,
-    'zh': 0x13, 'ph': 0x13, 'ng': 0x11, 'wh': 0x12,
-}
-
-def text_fallback_events(text: str, duration: float) -> list:
-    """Generate (timestamp, lip_code) events from plain text."""
-    codes = []
-    clean = re.sub(r"[^a-zA-Z\s]", "", text).lower()
-    i = 0
-    while i < len(clean):
-        ch = clean[i]
-        if ch == ' ':
-            i += 1
-            continue
-        di = clean[i:i+2]
-        if di in DIGRAPH_TO_LIP:
-            codes.append(DIGRAPH_TO_LIP[di])
-            i += 2
-        else:
-            codes.append(LETTER_TO_LIP.get(ch, 0x0E))
-            i += 1
-    # Deduplicate consecutive identical codes
-    deduped = []
-    for c in codes:
-        if not deduped or deduped[-1] != c:
-            deduped.append(c)
-    codes = deduped or [0x0E]
-    lead  = min(0.05, duration * 0.04)
-    trail = min(0.08, duration * 0.06)
-    speech = duration - lead - trail
-    n = len(codes)
-    return [(lead + (i / n) * speech, code) for i, code in enumerate(codes)]
 
 # ─── MSG parser ───────────────────────────────────────────────────────────────
 
@@ -270,14 +309,14 @@ def report_unknown_words(textgrid_dir: str) -> None:
                     findings.append((stem, word, xmin, xmax))
                     break
 
-    out_path = os.path.join(textgrid_dir, "unknown_words.txt")
+    out_path = "unknown.txt"
     with open(out_path, "w", encoding="utf-8") as f:
         if findings:
             n_files = len({s for s, *_ in findings})
             f.write("Unknown words (MFA assigned 'spn')\n")
             f.write(f"{len(findings)} occurrence(s) in {n_files} file(s).\n")
-            f.write("Add pronunciations for these words to custom.dict\n")
-            f.write("and re-run --steps mfa lip dat\n")
+            f.write("Add pronunciations for these words to your custom dictionary\n")
+            f.write("(dictionaries/custom.<mfa_name>.dict) and re-run --steps mfa lip dat\n")
             current_stem = None
             for stem, word, xmin, xmax in findings:
                 if stem != current_stem:
@@ -291,11 +330,12 @@ def report_unknown_words(textgrid_dir: str) -> None:
 
     return findings
 
-def build_events_from_textgrid(tg_path: str) -> list:
+def build_events_from_textgrid(tg_path: str, phoneme_to_code) -> list:
+    """Build (timestamp, lip_code) events from a TextGrid file."""
     intervals = parse_textgrid_phones(tg_path)
     events = []
     for xmin, _xmax, label in intervals:
-        code = arpa_to_lip_code(label)
+        code = phoneme_to_code(label)
         events.append((xmin, code))
     deduped = []
     for xmin, code in events:
@@ -306,7 +346,8 @@ def build_events_from_textgrid(tg_path: str) -> list:
 # ─── MFA ─────────────────────────────────────────────────────────────────────
 
 def run_mfa(corpus_dir: str, output_dir: str, mfa_env: str,
-            dict_path: str = "english_us_arpa") -> bool:
+            dict_path: str,
+            mfa_name: str) -> bool:
     """Run MFA alignment via 'conda run'. Returns True on success."""
     cmd = [
         "conda", "run", "-n", mfa_env, "--no-capture-output",
@@ -314,7 +355,7 @@ def run_mfa(corpus_dir: str, output_dir: str, mfa_env: str,
         "--output_format", "long_textgrid",
         corpus_dir,
         dict_path,
-        "english_us_arpa",
+        mfa_name,
         output_dir,
     ]
     n = len([f for f in os.listdir(corpus_dir) if f.endswith(".wav")])
@@ -324,13 +365,10 @@ def run_mfa(corpus_dir: str, output_dir: str, mfa_env: str,
 
 # ─── snd2acm ─────────────────────────────────────────────────────────────────
 
-DEFAULT_MFA_DICT_PATHS = [
-    os.path.expanduser("~/Documents/MFA/pretrained_models/dictionary/english_us_arpa.dict"),
-    os.path.expanduser("~/.local/share/montreal-forced-aligner/pretrained_models/dictionary/english_us_arpa.dict"),
-]
+DEFAULT_MFA_DICT_PATHS: list[str] = []  # populated at runtime via resolve_mfa_dict_paths()
 
-def find_mfa_dict() -> str | None:
-    for path in DEFAULT_MFA_DICT_PATHS:
+def find_mfa_dict(mfa_name: str) -> str | None:
+    for path in resolve_mfa_dict_paths(mfa_name):
         if os.path.isfile(path):
             return path
     return None
@@ -356,11 +394,8 @@ def find_snd2acm(hint: str = None) -> str | None:
     candidates += [
         "snd2acm",
         "snd2acm.exe",
-        "SND2ACM.EXE",
         os.path.join(script_dir, "snd2acm.exe"),
-        os.path.join(script_dir, "SND2ACM.EXE"),
         os.path.join(os.getcwd(), "snd2acm.exe"),
-        os.path.join(os.getcwd(), "SND2ACM.EXE"),
     ]
     for c in candidates:
         if shutil.which(c) or os.path.isfile(c):
@@ -559,7 +594,7 @@ def _scan_msg_dir(path: str) -> list:
     if not os.path.isdir(path):
         sys.exit(f"MSG directory not found: '{path}'\n"
                  "Create a 'msg/' folder and put your .MSG file(s) in it, "
-                 "or pass --msg DIR to point elsewhere.")
+                 "or update the 'msg' path in config.py.")
     found = sorted(
         os.path.join(path, f)
         for f in os.listdir(path)
@@ -574,43 +609,48 @@ def main():
         description="V.O.C.K. — Vocal Output Creation Kit",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    # Paths
-    parser.add_argument("--msgdir",          default="msg",
-        help="Folder containing .MSG file(s) (default: msg)")
-    parser.add_argument("--audiodir",     default="audio",
-        help="Input audio folder — any format (default: audio)")
-    parser.add_argument("--txtdir",       default="txt",
-        help="TXT output/edit folder (default: txt)")
-    parser.add_argument("--wavdir",       default="wav",
-        help="Standardised WAV output folder (default: wav)")
-    parser.add_argument("--acmdir",       default="acm",
-        help="ACM output folder (default: acm)")
-    parser.add_argument("--textgriddir",  default="textgrid",
-        help="TextGrid output folder (default: textgrid)")
-    parser.add_argument("--lipdir",       default="lip",
-        help="LIP output folder (default: lip)")
-    parser.add_argument("--datfile",      default="dat/vock.dat",
-        help="Output DAT path (default: dat/vock.dat)")
-    parser.add_argument("--snd2acm",      default=None,
-        help="Explicit path to snd2acm.exe")
-    parser.add_argument("--mfa-env",      default="aligner",
-        help="Conda env with MFA installed (default: aligner)")
-    parser.add_argument("--custom-dict",  default=None,
-        help="Path to custom pronunciation dictionary (default: custom.dict next to vock.py)")
-    # Audio options
-    parser.add_argument("--lufs",         type=float, default=-16.0,
-        help="Target loudness in LUFS (default: -16.0)")
-    parser.add_argument("--no-norm",      action="store_true",
-        help="Skip EBU R128 loudness normalisation")
-    # Step control
-    parser.add_argument("--steps",        nargs="+", metavar="STEP",
-        choices=ALL_STEPS,
-        help=("Run ONLY these step(s). "
-              f"Available: {', '.join(ALL_STEPS)}"))
-    parser.add_argument("--skip",         nargs="+", metavar="STEP",
-        choices=ALL_STEPS,
+    parser.add_argument("--language", default=config.LANGUAGE,
+        choices=list(LANGUAGE_CONFIG.keys()),
+        help=f"MFA language / phoneme set (default from config.py: {config.LANGUAGE}). "
+             f"Choices: {', '.join(LANGUAGE_CONFIG)}")
+    parser.add_argument("--steps", nargs="+", metavar="STEP", choices=ALL_STEPS,
+        help=f"Run ONLY these step(s). Available: {', '.join(ALL_STEPS)}")
+    parser.add_argument("--skip",  nargs="+", metavar="STEP", choices=ALL_STEPS,
         help="Skip these step(s) from the full pipeline.")
     args = parser.parse_args()
+
+    # ── Resolve all paths and settings from config.py ─────────────────────────
+    msgdir      = config.PATHS["msg"]
+    audiodir    = config.PATHS["audio"]
+    txtdir      = config.PATHS["txt"]
+    wavdir      = config.PATHS["wav"]
+    acmdir      = config.PATHS["acm"]
+    textgriddir = config.PATHS["textgrid"]
+    lipdir      = config.PATHS["lip"]
+    datfile     = config.PATHS["dat"]
+    snd2acm_cfg = config.PATHS["snd2acm"]
+    mfa_env     = config.SETTINGS["mfa_env"]
+    lufs        = config.SETTINGS["lufs"]
+    no_norm     = config.SETTINGS["no_norm"]
+
+    # ── Language & Dictionary Resolution ──────────────────────────────────────
+    mfa_name        = LANGUAGE_CONFIG[args.language]
+    phoneme_mod     = load_phoneme_module(mfa_name)
+    phoneme_to_code = make_phoneme_converter(mfa_name, phoneme_mod)
+
+    custom_dict_path = resolve_custom_dict(mfa_name, None)
+    main_dict_path   = find_mfa_dict(mfa_name)
+
+    # Prepare printable strings
+    custom_dict_print = custom_dict_path if custom_dict_path and os.path.isfile(custom_dict_path) else "None"
+    main_dict_print   = main_dict_path if main_dict_path else f"{mfa_name} (MFA built-in/downloaded)"
+
+    print_section("Configuration")
+    print(f"  Language       : {args.language}")
+    print(f"  Acoustic Model : {mfa_name}")
+    print(f"  Dictionary     : {main_dict_print}")
+    print(f"  Custom Dict    : {custom_dict_print}")
+    print(f"  Phoneme Map    : phonemes_{mfa_name}.py")
 
     # Resolve which steps to run
     if args.steps:
@@ -622,7 +662,7 @@ def main():
                 run.discard(s)
 
     # Fast-fail dependency check
-    check_dependencies(run, args.snd2acm, args.mfa_env)
+    check_dependencies(run, snd2acm_cfg, mfa_env)
 
     # ── Pipeline state ────────────────────────────────────────────────────────
     msg_paths  = []
@@ -631,14 +671,13 @@ def main():
 
     acm_ok     = 0
     lip_ok     = 0
-    lip_approx = 0
     lip_fail   = 0
 
     # ── STEP 1: MSG → TXT ────────────────────────────────────────────────────
     if "msg" in run:
         print_section("STEP 1 — Parse MSG → TXT")
 
-        msg_paths = _scan_msg_dir(args.msgdir)
+        msg_paths = _scan_msg_dir(msgdir)
 
         all_entries = []
         for msg_path in msg_paths:
@@ -653,10 +692,10 @@ def main():
         if not all_entries:
             sys.exit("No audio-tagged lines found in any MSG file.")
 
-        os.makedirs(args.txtdir, exist_ok=True)
+        os.makedirs(txtdir, exist_ok=True)
         written = 0
         for tag, text in all_entries:
-            out = os.path.join(args.txtdir, f"{tag}.txt")
+            out = os.path.join(txtdir, f"{tag}.txt")
             # Only overwrite if content differs (preserve manual edits)
             if os.path.isfile(out):
                 existing = open(out, encoding="cp1252").read().strip()
@@ -672,74 +711,74 @@ def main():
             txt_map[tag] = text
             written += 1
 
-        print(f"  {written} new TXT file(s) written to '{args.txtdir}/'")
+        print(f"  {written} new TXT file(s) written to '{txtdir}/'")
         print(f"  (Total {len(all_entries)} lines; existing files preserved if manually edited)")
 
     else:
         print_section("STEP 1 — Parse MSG → TXT  [skipped]")
         # Resolve msg_paths for the DAT step (best-effort; missing dir is not fatal here)
-        if os.path.isdir(args.msgdir):
-            msg_paths = _scan_msg_dir(args.msgdir)
+        if os.path.isdir(msgdir):
+            msg_paths = _scan_msg_dir(msgdir)
         # Load txt_map from existing TXT files (respecting manual edits)
-        if os.path.isdir(args.txtdir):
-            for f in sorted(os.listdir(args.txtdir)):
+        if os.path.isdir(txtdir):
+            for f in sorted(os.listdir(txtdir)):
                 if f.endswith(".txt"):
                     stem = os.path.splitext(f)[0]
                     txt_map[stem] = open(
-                        os.path.join(args.txtdir, f), encoding="cp1252").read().strip()
+                        os.path.join(txtdir, f), encoding="cp1252").read().strip()
 
     # ── STEP 2: audio/ → wav/ (Universal Audio step) ─────────────────────────
     if "wav" in run:
         print_section("STEP 2 — Convert audio/ → wav/  (22050 Hz mono 16-bit)")
-        os.makedirs(args.wavdir, exist_ok=True)
+        os.makedirs(wavdir, exist_ok=True)
 
         # Scan audio/ for all supported formats
         audio_map: dict[str, str] = {}
-        if os.path.isdir(args.audiodir):
-            for f in sorted(os.listdir(args.audiodir)):
+        if os.path.isdir(audiodir):
+            for f in sorted(os.listdir(audiodir)):
                 ext = os.path.splitext(f)[1].lower()
                 if ext in AUDIO_EXTS:
                     stem = os.path.splitext(f)[0]
                     # Higher-priority format wins (wav > mp3 > others)
                     existing_ext = os.path.splitext(audio_map.get(stem, ""))[1].lower()
                     if stem not in audio_map:
-                        audio_map[stem] = os.path.join(args.audiodir, f)
+                        audio_map[stem] = os.path.join(audiodir, f)
                     elif ext == ".wav" and existing_ext != ".wav":
-                        audio_map[stem] = os.path.join(args.audiodir, f)
+                        audio_map[stem] = os.path.join(audiodir, f)
         else:
-            print(f"  [warn] Audio folder '{args.audiodir}/' not found.")
+            print(f"  [warn] Audio folder '{audiodir}/' not found.")
 
         if not audio_map:
-            sys.exit(f"No audio files found in '{args.audiodir}/'")
+            sys.exit(f"No audio files found in '{audiodir}/'")
 
         enc_ok = 0
         skipped = 0
         for stem in sorted(audio_map):
             src_path = audio_map[stem]
             # Validate: must have a matching TXT
-            txt_path = os.path.join(args.txtdir, stem + ".txt")
+            txt_path = os.path.join(txtdir, stem + ".txt")
             if not os.path.isfile(txt_path):
-                print(f"  [skip] {stem}: no matching .txt in '{args.txtdir}/' "
+                print(f"  [skip] {stem}: no matching .txt in '{txtdir}/' "
                       f"(run the 'msg' step first, or the tag is not in the MSG file)")
                 skipped += 1
                 continue
 
-            out_wav = os.path.join(args.wavdir, stem + ".wav")
+            out_wav = os.path.join(wavdir, stem + ".wav")
             try:
                 ext = os.path.splitext(src_path)[1].lower()
                 # Fast path: WAV already in correct format and norm disabled
-                if args.no_norm and ext == ".wav" and wav_is_standard(src_path):
+                if no_norm and ext == ".wav" and wav_is_standard(src_path):
                     shutil.copy2(src_path, out_wav)
                     print(f"  copied   {out_wav}  (already 22050 Hz mono 16-bit)")
                 else:
                     cmd = ["ffmpeg", "-y", "-i", src_path]
-                    if not args.no_norm:
-                        cmd.extend(["-af", f"loudnorm=I={args.lufs}:LRA=11:TP=-1.5"])
+                    if not no_norm:
+                        cmd.extend(["-af", f"loudnorm=I={lufs}:LRA=11:TP=-1.5"])
                     cmd.extend(["-ar", "22050", "-ac", "1", "-c:a", "pcm_s16le", out_wav])
                     r = subprocess.run(cmd, capture_output=True, text=True)
                     if r.returncode != 0:
                         raise RuntimeError(r.stderr.strip())
-                    action = "enc+norm" if not args.no_norm else "encoded"
+                    action = "enc+norm" if not no_norm else "encoded"
                     print(f"  {action.ljust(8)} {out_wav}")
 
                 wav_pairs.append((stem, out_wav, txt_path))
@@ -747,19 +786,19 @@ def main():
             except RuntimeError as e:
                 print(f"  [error] {stem}: ffmpeg failed: {e}")
 
-        print(f"\n  {enc_ok} file(s) ready in '{args.wavdir}/'  "
+        print(f"\n  {enc_ok} file(s) ready in '{wavdir}/'  "
               f"({skipped} skipped — no matching TXT)")
 
     else:
         print_section("STEP 2 — Convert audio/ → wav/  [skipped]")
         # Populate wav_pairs from existing standardised WAVs
-        if os.path.isdir(args.wavdir):
-            for f in sorted(os.listdir(args.wavdir)):
+        if os.path.isdir(wavdir):
+            for f in sorted(os.listdir(wavdir)):
                 if f.upper().endswith(".WAV"):
                     stem     = os.path.splitext(f)[0]
-                    txt_path = os.path.join(args.txtdir, stem + ".txt")
+                    txt_path = os.path.join(txtdir, stem + ".txt")
                     if os.path.isfile(txt_path):
-                        wav_pairs.append((stem, os.path.join(args.wavdir, f), txt_path))
+                        wav_pairs.append((stem, os.path.join(wavdir, f), txt_path))
 
     # ── STEP 3: wav/ → ACM ───────────────────────────────────────────────────
     if "acm" in run:
@@ -767,14 +806,14 @@ def main():
         if not wav_pairs:
             print("  No standardised WAV files found — run the 'wav' step first.")
         else:
-            snd2acm_bin = find_snd2acm(args.snd2acm)
+            snd2acm_bin = find_snd2acm(snd2acm_cfg)
             if not snd2acm_bin:
                 print("  snd2acm.exe not found — skipping ACM generation.")
                 print("  Place snd2acm.exe next to vock.py and re-run.")
             else:
-                os.makedirs(args.acmdir, exist_ok=True)
+                os.makedirs(acmdir, exist_ok=True)
                 for stem, wav_path, _txt in wav_pairs:
-                    acm_path = os.path.join(args.acmdir, stem + ".acm")
+                    acm_path = os.path.join(acmdir, stem + ".acm")
                     try:
                         wav_to_acm(snd2acm_bin, wav_path, acm_path)
                         size_kb = os.path.getsize(acm_path) / 1024
@@ -792,7 +831,7 @@ def main():
         if not wav_pairs:
             print("  No WAV files available — run the 'wav' step first.")
         else:
-            os.makedirs(args.textgriddir, exist_ok=True)
+            os.makedirs(textgriddir, exist_ok=True)
             import tempfile
             with tempfile.TemporaryDirectory(prefix="vock_corpus_") as corpus_dir:
                 for stem, wav_path, txt_path in wav_pairs:
@@ -803,22 +842,21 @@ def main():
                 mfa_tmp_out = os.path.join(corpus_dir, "aligned")
                 os.makedirs(mfa_tmp_out)
 
-                # Resolve dictionary — merge custom.dict if present
-                script_dir   = os.path.dirname(os.path.abspath(__file__))
-                custom_dict  = args.custom_dict or os.path.join(script_dir, "custom.dict")
-                main_dict    = find_mfa_dict()
-                dict_arg     = "english_us_arpa"
-                if os.path.isfile(custom_dict):
-                    if main_dict:
+                # Resolve dictionary — merge custom dict if present
+                dict_arg = mfa_name  # MFA built-in name as fallback
+                if custom_dict_path and os.path.isfile(custom_dict_path):
+                    if main_dict_path:
                         merged = os.path.join(corpus_dir, "merged.dict")
-                        merge_dictionaries(main_dict, custom_dict, merged)
+                        merge_dictionaries(main_dict_path, custom_dict_path, merged)
                         dict_arg = merged
-                        print(f"  Using custom dictionary: {custom_dict}")
+                        print(f"  Using custom dictionary: {custom_dict_path}")
                     else:
-                        print(f"  [warn] custom.dict found but main MFA dictionary "
-                              f"could not be located — using english_us_arpa only.")
+                        print(f"  [warn] Custom dictionary found ({custom_dict_path}) but the "
+                              f"main MFA dictionary for '{mfa_name}' could not be located "
+                              f"— passing '{mfa_name}' to MFA directly.")
 
-                mfa_ok = run_mfa(corpus_dir, mfa_tmp_out, args.mfa_env, dict_arg)
+                mfa_ok = run_mfa(corpus_dir, mfa_tmp_out, mfa_env,
+                                 dict_arg, mfa_name)
 
                 if mfa_ok:
                     tg_count = 0
@@ -826,12 +864,12 @@ def main():
                         if f.endswith(".TextGrid"):
                             shutil.copyfile(
                                 os.path.join(mfa_tmp_out, f),
-                                os.path.join(args.textgriddir, f))
+                                os.path.join(textgriddir, f))
                             tg_count += 1
-                    print(f"\n  {tg_count} TextGrid(s) saved to '{args.textgriddir}/'")
-                    report_unknown_words(args.textgriddir)
+                    print(f"\n  {tg_count} TextGrid(s) saved to '{textgriddir}/'")
+                    report_unknown_words(textgriddir)
                 else:
-                    print("\n  MFA failed — text approximation will be used for LIP files.")
+                    print("\n  MFA failed — no TextGrids generated.")
     else:
         print_section("STEP 4 — MFA forced alignment  [skipped]")
 
@@ -841,10 +879,10 @@ def main():
         if not wav_pairs:
             print("  No WAV files available for duration — run the 'wav' step first.")
         else:
-            os.makedirs(args.lipdir, exist_ok=True)
-            for stem, wav_path, txt_path in wav_pairs:
-                lip_path = os.path.join(args.lipdir, stem + ".lip")
-                tg_path  = os.path.join(args.textgriddir, stem + ".TextGrid")
+            os.makedirs(lipdir, exist_ok=True)
+            for stem, wav_path, _txt_path in wav_pairs:
+                lip_path = os.path.join(lipdir, stem + ".lip")
+                tg_path  = os.path.join(textgriddir, stem + ".TextGrid")
 
                 try:
                     duration = ffprobe_duration(wav_path)
@@ -853,51 +891,42 @@ def main():
                     lip_fail += 1
                     continue
 
-                # Try MFA TextGrid first
                 if os.path.isfile(tg_path):
                     try:
-                        events = build_events_from_textgrid(tg_path)
+                        events = build_events_from_textgrid(tg_path, phoneme_to_code)
                         write_lip(lip_path, stem, duration, events)
                         print(f"  wrote  {lip_path}  "
                               f"({duration:.3f}s, {len(events)} events, MFA)")
                         lip_ok += 1
-                        continue
                     except Exception as e:
-                        print(f"  [warn] {stem}: TextGrid error ({e}), "
-                              "falling back to text approximation")
+                        print(f"  [error] {stem}: TextGrid error ({e})")
+                        lip_fail += 1
+                else:
+                    print(f"  [error] {stem}: Missing TextGrid (MFA failed or was skipped)")
+                    lip_fail += 1
 
-                # Text-fallback: read from txt_map (honours manual edits) or file
-                text = txt_map.get(stem, "")
-                if not text and os.path.isfile(txt_path):
-                    text = open(txt_path, encoding="cp1252").read().strip()
-                events = text_fallback_events(text, duration)
-                write_lip(lip_path, stem, duration, events)
-                print(f"  wrote  {lip_path}  "
-                      f"({duration:.3f}s, {len(events)} events, text-approx)")
-                lip_approx += 1
-
-            print(f"\n  {lip_ok} MFA  +  {lip_approx} text-approx  +  {lip_fail} failed")
+            print(f"\n  {lip_ok} MFA successfully mapped  +  {lip_fail} failed")
     else:
         print_section("STEP 5 — Generate LIP files  [skipped]")
 
     # ── STEP 6: Build DAT ────────────────────────────────────────────────────
     if "dat" in run:
         print_section("STEP 6 — Build vock.dat")
-        os.makedirs(os.path.dirname(args.datfile) or ".", exist_ok=True)
+        os.makedirs(os.path.dirname(datfile) or ".", exist_ok=True)
         try:
             dat_entries = collect_dat_entries(
                 msg_paths   = msg_paths,
-                acm_dir     = args.acmdir,
-                lip_dir     = args.lipdir,
-                txt_dir     = args.txtdir,
+                acm_dir     = acmdir,
+                lip_dir     = lipdir,
+                txt_dir     = txtdir,
                 include_acm = ("acm" not in (args.skip or [])),
             )
             if not dat_entries:
                 print("  No files to pack — skipping.")
             else:
-                write_dat2(args.datfile, dat_entries)
-                total_kb = os.path.getsize(args.datfile) / 1024
-                print(f"  wrote  {args.datfile}  "
+                write_dat2(datfile, dat_entries)
+                total_kb = os.path.getsize(datfile) / 1024
+                print(f"  wrote  {datfile}  "
                       f"({len(dat_entries)} file(s), {total_kb:.1f} KB)")
         except Exception as e:
             print(f"  [error] DAT creation failed: {e}")
@@ -914,11 +943,10 @@ def main():
     print(f"  WAV files  : {len(wav_pairs)}")
     print(f"  ACM files  : {acm_ok if 'acm' in run else 'skipped'}")
     if "lip" in run:
-        print(f"  LIP files  : {lip_ok} MFA  +  {lip_approx} text-approx  "
-              f"({lip_fail} failed)")
+        print(f"  LIP files  : {lip_ok} MFA generated  ({lip_fail} failed)")
     else:
         print("  LIP files  : skipped")
-    print(f"  DAT file   : {args.datfile if 'dat' in run else 'skipped'}")
+    print(f"  DAT file   : {datfile if 'dat' in run else 'skipped'}")
     print()
 
 
