@@ -22,6 +22,7 @@ All folders are created automatically or configured via `config.py`.
 vock/
 ├── vock.py
 ├── config.py             ← Global settings and paths
+├── skip.py               ← Optional: NPC prefixes to exclude from the pipeline
 ├── dictionaries/         ← custom.<language>.dict files
 ├── phonemes/             ← Phoneme mapping tables
 ├── msg/                  ← put your .MSG file(s) here
@@ -238,6 +239,21 @@ If you run `python3 vock.py` again after editing a `.txt` file, the `msg` step
 will notice the existing file differs from the MSG source and print
 `[kept manual edit]` — your correction is safe.
 
+## Skipping completed characters
+
+As characters finish recording and their pipeline outputs are already on disk, you can exclude them from future runs using `skip.py`. This prevents re-encoding, re-aligning, and re-generating files that haven't changed.
+
+Add prefixes to `skip.py`**
+
+The prefix is the audio tag stem — the letters before the number. For example, `MOR` covers `MOR1` through `MOR27`. Uncomment a line to skip that character:
+
+```
+# ARTH    # Arthur Pendragon
+# BRIGE   # Bridge Keeper
+```
+
+Steps 1–5 (msg, wav, acm, mfa, lip) skip any character listed in `skip.py`. The DAT step always compiles **all** files that already exist on disk, so completed characters are still included in `vock.dat`.
+
 ## Dictionary Lookup
 
 `dict_lookup.py` is a standalone interactive tool that lets you check whether a word is known to MFA before committing it to a `.txt` file. It also loads the custom dictionary if available. The custom words are flagged with `[custom]`.
@@ -311,7 +327,7 @@ Typical causes of unknown words:
 
 ## Custom Configuration
 All global settings, file paths, and environment configurations are managed in `config.py`. You can adjust these values to suit your specific project setup or system environment:
-- PATHS: Defines the location of your input/output folders and the path to your snd2acm.exe executable.
+- PATHS: Defines the location of your input/output folders and the path to your snd2acm.exe executable. The optional `skip_chars` key points to a `skip.py` file listing NPC prefixes to exclude from the pipeline.
 - SETTINGS:
   - mfa_env: The name of the conda environment where MFA is installed (default: aligner).
   - lufs: The target loudness for audio normalization (default: -16).

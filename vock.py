@@ -162,6 +162,41 @@ def make_phoneme_converter(mfa_name: str, module) -> callable:
 
     return _convert
 
+# ─── Character skip file ──────────────────────────────────────────────────────
+
+def load_skip_prefixes(skip_file: str | None) -> set[str]:
+    """
+    Read skip.py (or any path set in config.PATHS["skip_chars"]).
+    Returns a set of upper-cased NPC tag prefixes to exclude from the pipeline.
+    Returns an empty set when the file is absent or unset.
+
+    File format: one prefix per line, # comments, blank lines ignored.
+        ARTH    # King Arthur — recording complete
+        BRIGE   # Bridge Keeper — complete
+    """
+    if not skip_file or not os.path.isfile(skip_file):
+        return set()
+    skipped: set[str] = set()
+    with open(skip_file, encoding="utf-8") as fh:
+        for raw in fh:
+            token = raw.split("#", 1)[0].strip().upper()
+            if token:
+                skipped.add(token)
+    return skipped
+
+
+def filter_by_prefix(items: list, skip: set[str], key=lambda x: x[0]) -> list:
+    """
+    Remove items whose NPC tag prefix (stem with trailing digits stripped) is in *skip*.
+    key(item) must return the stem string (e.g. 'MOR1', 'ARTH12').
+    Returns items unchanged when skip is empty.
+    """
+    if not skip:
+        return items
+    return [it for it in items
+            if re.sub(r"\d+$", "", key(it).upper()) not in skip]
+
+
 def resolve_custom_dict(mfa_name: str, explicit_path: str | None) -> str | None:
     """
     Return the path for the language-specific custom dictionary, or *explicit_path*
@@ -351,7 +386,7 @@ def run_mfa(corpus_dir: str, output_dir: str, mfa_env: str,
     """Run MFA alignment via 'conda run'. Returns True on success."""
     cmd = [
         "conda", "run", "-n", mfa_env, "--no-capture-output",
-        "mfa", "align", "--clean",
+        "mfa", "align", "--clean", "--single_speaker",
         "--output_format", "long_textgrid",
         corpus_dir,
         dict_path,
@@ -629,9 +664,12 @@ def main():
     lipdir      = config.PATHS["lip"]
     datfile     = config.PATHS["dat"]
     snd2acm_cfg = config.PATHS["snd2acm"]
+    skip_chars_file = config.PATHS.get("skip_chars")   # optional key; None if absent
     mfa_env     = config.SETTINGS["mfa_env"]
     lufs        = config.SETTINGS["lufs"]
     no_norm     = config.SETTINGS["no_norm"]
+
+    skip_prefixes = load_skip_prefixes(skip_chars_file)
 
     # ── Language & Dictionary Resolution ──────────────────────────────────────
     mfa_name        = LANGUAGE_CONFIG[args.language]
@@ -651,6 +689,8 @@ def main():
     print(f"  Dictionary     : {main_dict_print}")
     print(f"  Custom Dict    : {custom_dict_print}")
     print(f"  Phoneme Map    : phonemes_{mfa_name}.py")
+    if skip_prefixes:
+        print(f"  Skipping       : {', '.join(sorted(skip_prefixes))}")
 
     # Resolve which steps to run
     if args.steps:
@@ -691,6 +731,8 @@ def main():
 
         if not all_entries:
             sys.exit("No audio-tagged lines found in any MSG file.")
+
+        all_entries = filter_by_prefix(all_entries, skip_prefixes, key=lambda x: x[0])
 
         os.makedirs(txtdir, exist_ok=True)
         written = 0
@@ -753,7 +795,7 @@ def main():
 
         enc_ok = 0
         skipped = 0
-        for stem in sorted(audio_map):
+        for stem in filter_by_prefix(sorted(audio_map), skip_prefixes, key=lambda x: x):
             src_path = audio_map[stem]
             # Validate: must have a matching TXT
             txt_path = os.path.join(txtdir, stem + ".txt")
@@ -797,7 +839,8 @@ def main():
                 if f.upper().endswith(".WAV"):
                     stem     = os.path.splitext(f)[0]
                     txt_path = os.path.join(txtdir, stem + ".txt")
-                    if os.path.isfile(txt_path):
+                    if os.path.isfile(txt_path) and \
+                            filter_by_prefix([(stem,)], skip_prefixes, key=lambda x: x[0]):
                         wav_pairs.append((stem, os.path.join(wavdir, f), txt_path))
 
     # ── STEP 3: wav/ → ACM ───────────────────────────────────────────────────
@@ -831,45 +874,70 @@ def main():
         if not wav_pairs:
             print("  No WAV files available — run the 'wav' step first.")
         else:
-            os.makedirs(textgriddir, exist_ok=True)
             import tempfile
-            with tempfile.TemporaryDirectory(prefix="vock_corpus_") as corpus_dir:
-                for stem, wav_path, txt_path in wav_pairs:
-                    shutil.copy2(wav_path, os.path.join(corpus_dir, stem + ".wav"))
-                    text = open(txt_path, encoding="cp1252").read()
-                    open(os.path.join(corpus_dir, stem + ".txt"), "w", encoding="utf-8").write(text)
+            os.makedirs(textgriddir, exist_ok=True)
 
-                mfa_tmp_out = os.path.join(corpus_dir, "aligned")
-                os.makedirs(mfa_tmp_out)
+            # Resolve dictionary — merge custom dict once, reuse across all groups
+            dict_arg   = mfa_name   # MFA built-in name as fallback
+            _merge_tmp = None       # holds TemporaryDirectory when we merge
 
-                # Resolve dictionary — merge custom dict if present
-                dict_arg = mfa_name  # MFA built-in name as fallback
-                if custom_dict_path and os.path.isfile(custom_dict_path):
-                    if main_dict_path:
-                        merged = os.path.join(corpus_dir, "merged.dict")
-                        merge_dictionaries(main_dict_path, custom_dict_path, merged)
-                        dict_arg = merged
-                        print(f"  Using custom dictionary: {custom_dict_path}")
-                    else:
-                        print(f"  [warn] Custom dictionary found ({custom_dict_path}) but the "
-                              f"main MFA dictionary for '{mfa_name}' could not be located "
-                              f"— passing '{mfa_name}' to MFA directly.")
-
-                mfa_ok = run_mfa(corpus_dir, mfa_tmp_out, mfa_env,
-                                 dict_arg, mfa_name)
-
-                if mfa_ok:
-                    tg_count = 0
-                    for f in os.listdir(mfa_tmp_out):
-                        if f.endswith(".TextGrid"):
-                            shutil.copyfile(
-                                os.path.join(mfa_tmp_out, f),
-                                os.path.join(textgriddir, f))
-                            tg_count += 1
-                    print(f"\n  {tg_count} TextGrid(s) saved to '{textgriddir}/'")
-                    report_unknown_words(textgriddir)
+            if custom_dict_path and os.path.isfile(custom_dict_path):
+                if main_dict_path:
+                    _merge_tmp = tempfile.TemporaryDirectory(prefix="vock_dict_")
+                    merged = os.path.join(_merge_tmp.name, "merged.dict")
+                    merge_dictionaries(main_dict_path, custom_dict_path, merged)
+                    dict_arg = merged
+                    print(f"  Using custom dictionary: {custom_dict_path}")
                 else:
-                    print("\n  MFA failed — no TextGrids generated.")
+                    print(f"  [warn] Custom dictionary found ({custom_dict_path}) but the "
+                          f"main MFA dictionary for '{mfa_name}' could not be located "
+                          f"— passing '{mfa_name}' to MFA directly.")
+
+            # Group wav_pairs by NPC tag prefix (e.g. MOR, ARTH, ZAIUS …)
+            groups: dict[str, list] = {}
+            for item in wav_pairs:
+                prefix = re.sub(r"\d+$", "", item[0].upper())
+                groups.setdefault(prefix, []).append(item)
+
+            total_tg      = 0
+            failed_groups: list[str] = []
+
+            for prefix, pairs in sorted(groups.items()):
+                print(f"\n  [{prefix}]  {len(pairs)} file(s) …")
+                with tempfile.TemporaryDirectory(prefix=f"vock_{prefix}_") as corpus_dir:
+                    for stem, wav_path, txt_path in pairs:
+                        shutil.copy2(wav_path, os.path.join(corpus_dir, stem + ".wav"))
+                        text = open(txt_path, encoding="cp1252").read()
+                        open(os.path.join(corpus_dir, stem + ".txt"), "w",
+                             encoding="utf-8").write(text)
+
+                    mfa_tmp_out = os.path.join(corpus_dir, "aligned")
+                    os.makedirs(mfa_tmp_out)
+
+                    ok = run_mfa(corpus_dir, mfa_tmp_out, mfa_env, dict_arg, mfa_name)
+
+                    if ok:
+                        group_tg = 0
+                        for f in os.listdir(mfa_tmp_out):
+                            if f.endswith(".TextGrid"):
+                                shutil.copyfile(
+                                    os.path.join(mfa_tmp_out, f),
+                                    os.path.join(textgriddir, f))
+                                total_tg += 1
+                                group_tg += 1
+                        print(f"    {group_tg}/{len(pairs)} TextGrid(s) exported")
+                    else:
+                        failed_groups.append(prefix)
+                        print(f"    [warn] MFA failed for [{prefix}] — "
+                              "text approximation will be used for these files.")
+
+            if _merge_tmp:
+                _merge_tmp.cleanup()
+
+            print(f"\n  {total_tg} TextGrid(s) saved to '{textgriddir}/'")
+            if failed_groups:
+                print(f"  Failed groups: {', '.join(failed_groups)}")
+            report_unknown_words(textgriddir)
     else:
         print_section("STEP 4 — MFA forced alignment  [skipped]")
 

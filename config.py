@@ -6,15 +6,16 @@ LANGUAGE = "arpabet"
 
 # Set the paths to the file structure, relative to the script location.
 PATHS = {
-    "msg":       "./msg",
-    "audio":     "./audio",
-    "txt":       "./txt",
-    "wav":       "./wav",
-    "acm":       "./acm",
-    "textgrid":  "./textgrid",
-    "lip":       "./lip",
-    "dat":       "./dat/vock.dat",
-    "snd2acm":   "./snd2acm.exe",
+    "msg":        "./msg",
+    "audio":      "./audio",
+    "txt":        "./txt",
+    "wav":        "./wav",
+    "acm":        "./acm",
+    "textgrid":   "./textgrid",
+    "lip":        "./lip",
+    "dat":        "./dat/vock.dat",
+    "snd2acm":    "./snd2acm.exe",
+    "skip_chars": "./skip.py",
 }
 
 SETTINGS = {
