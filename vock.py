@@ -111,7 +111,30 @@ LANGUAGE_CONFIG: dict[str, str] = {
     "hungarian":  "hungarian_mfa",
     "polish":     "polish_mfa",
     "portuguese": "portuguese_mfa",
+    "czech":      "czech_mfa",
 }
+
+#: Maps --language value → Windows code page used by Fallout 2 MSG/TXT files.
+#: CP1252 (Western European) covers English, Spanish, French, German, Italian,
+#: Hungarian, and Portuguese.  Polish and Czech use CP1250 (Central European).
+#: Russian uses CP1251 (Cyrillic).
+LANG_ENCODING: dict[str, str] = {
+    "arpabet":    "cp1252",
+    "english":    "cp1252",
+    "spanish":    "cp1252",
+    "french":     "cp1252",
+    "german":     "cp1252",
+    "italian":    "cp1252",
+    "hungarian":  "cp1252",
+    "portuguese": "cp1252",
+    "polish":     "cp1250",
+    "czech":      "cp1250",
+    "russian":    "cp1251",
+}
+
+def lang_enc(language: str) -> str:
+    """Return the Windows code page for MSG/TXT files in the given language."""
+    return LANG_ENCODING.get(language, "cp1252")
 
 def load_phoneme_module(mfa_name: str):
     """
@@ -233,10 +256,10 @@ LIP_MULTIPLIER  = 2   # offset = seconds × 2 × 22050
 
 MSG_LINE_RE = re.compile(r"^\s*\{[^}]*\}\s*\{([^}]*)\}\s*\{(.*)\}\s*$")
 
-def parse_msg(path: str) -> list:
+def parse_msg(path: str, encoding: str = "cp1252") -> list:
     """Return [(audio_tag, text), …] for lines with a non-empty audio tag."""
     results = []
-    with open(path, encoding="cp1252") as fh:
+    with open(path, encoding=encoding) as fh:
         for line in fh:
             m = MSG_LINE_RE.match(line)
             if not m:
@@ -722,7 +745,7 @@ def main():
         all_entries = []
         for msg_path in msg_paths:
             print(f"  Reading {msg_path}")
-            found = parse_msg(msg_path)
+            found = parse_msg(msg_path, encoding=lang_enc(args.language))
             if not found:
                 print(f"  [warn] No tagged audio lines in '{msg_path}' — skipping.")
                 continue
@@ -740,7 +763,7 @@ def main():
             out = os.path.join(txtdir, f"{tag}.txt")
             # Only overwrite if content differs (preserve manual edits)
             if os.path.isfile(out):
-                existing = open(out, encoding="cp1252").read().strip()
+                existing = open(out, encoding=lang_enc(args.language)).read().strip()
                 if existing == text:
                     txt_map[tag] = text
                     continue
@@ -748,7 +771,7 @@ def main():
                 txt_map[tag] = existing
                 print(f"  [kept manual edit] {out}")
                 continue
-            with open(out, "w", encoding="cp1252") as fh:
+            with open(out, "w", encoding=lang_enc(args.language)) as fh:
                 fh.write(text)
             txt_map[tag] = text
             written += 1
@@ -767,7 +790,7 @@ def main():
                 if f.endswith(".txt"):
                     stem = os.path.splitext(f)[0]
                     txt_map[stem] = open(
-                        os.path.join(txtdir, f), encoding="cp1252").read().strip()
+                        os.path.join(txtdir, f), encoding=lang_enc(args.language)).read().strip()
 
     # ── STEP 2: audio/ → wav/ (Universal Audio step) ─────────────────────────
     if "wav" in run:
@@ -907,7 +930,7 @@ def main():
                 with tempfile.TemporaryDirectory(prefix=f"vock_{prefix}_") as corpus_dir:
                     for stem, wav_path, txt_path in pairs:
                         shutil.copy2(wav_path, os.path.join(corpus_dir, stem + ".wav"))
-                        text = open(txt_path, encoding="cp1252").read()
+                        text = open(txt_path, encoding=lang_enc(args.language)).read()
                         open(os.path.join(corpus_dir, stem + ".txt"), "w",
                              encoding="utf-8").write(text)
 

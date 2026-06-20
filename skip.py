@@ -7,7 +7,7 @@
 # The prefix is the audio tag stem — the part before the number. For example:
 #   MOR     covers MOR1, MOR2 … MOR27   (Aunt Morlis)
 #   ARTH    covers ARTH1 … ARTH29       (King Arthur)
-#   BRIGE   covers BRIGE1 … BRIGE17     (Bridge Keeper)
+#   BRIGE   covers BRIGE1 … BRIGE17     (Bridgekeeper)
 #
 # Uncomment a line to skip that character.
 #
@@ -17,10 +17,10 @@ DAVIN               # Davin
 
 # Special Encounters
 ARTH                # Arthur Pendragon
-BRIGE               # Bridge Keeper
+BRIGE               # Bridgekeeper
 
 # Arroyo
-MOR                 # Aunt Morlis
+MOR                 # Morlis
 
 # Klamath
 SALLY               # Sally Dunton
@@ -41,10 +41,11 @@ JENNY               # Jenny
 # Redding
 
 # Broken Hills
-ZAIUS               # Zaius
+#ZAIUS                # Zaius
 
 # New Reno
-CW                  # Chris Wright
+CW                  # Christopher Wright
+KEITH               # Keith Wright
 
 # NCR
 
