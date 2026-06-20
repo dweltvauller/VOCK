@@ -5,9 +5,9 @@
 # already exist on disk, so completed characters are still included in vock.dat.
 #
 # The prefix is the audio tag stem — the part before the number. For example:
-#   MOR     covers MOR1, MOR2 … MOR27   (Aunt Morlis)
+#   MOR     covers MOR1, MOR2 … MOR27   (Morlis)
 #   ARTH    covers ARTH1 … ARTH29       (King Arthur)
-#   BRIGE   covers BRIGE1 … BRIGE17     (Bridge Keeper)
+#   BRIGE   covers BRIGE1 … BRIGE17     (Bridgekeeper)
 #
 # Uncomment a line to skip that character.
 #
