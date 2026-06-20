@@ -41,10 +41,11 @@ JENNY               # Jenny
 # Redding
 
 # Broken Hills
-ZAIUS               # Zaius
+#ZAIUS                # Zaius
 
 # New Reno
-CW                  # Chris Wright
+CW                  # Christopher Wright
+KEITH               # Keith Wright
 
 # NCR
 

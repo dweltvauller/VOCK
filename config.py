@@ -1,7 +1,7 @@
 # config.py
 
 # Set your default language.
-# Options: arpabet, english, spanish, russian, german, italian, french, hungarian, polish, portuguese
+# Options: arpabet, english, spanish, russian, german, italian, french, hungarian, polish, portuguese, czech
 LANGUAGE = "arpabet"
 
 # Set the paths to the file structure, relative to the script location.
