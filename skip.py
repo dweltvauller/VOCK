@@ -17,10 +17,10 @@ DAVIN               # Davin
 
 # Special Encounters
 ARTH                # Arthur Pendragon
-BRIGE               # Bridge Keeper
+BRIGE               # Bridgekeeper
 
 # Arroyo
-MOR                 # Aunt Morlis
+MOR                 # Morlis
 
 # Klamath
 SALLY               # Sally Dunton
