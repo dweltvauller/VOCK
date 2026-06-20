@@ -249,7 +249,7 @@ The prefix is the audio tag stem — the letters before the number. For example,
 
 ```
 # ARTH    # Arthur Pendragon
-# BRIGE   # Bridge Keeper
+# BRIGE   # Bridgekeeper
 ```
 
 Steps 1–5 (msg, wav, acm, mfa, lip) skip any character listed in `skip.py`. The DAT step always compiles **all** files that already exist on disk, so completed characters are still included in `vock.dat`.
