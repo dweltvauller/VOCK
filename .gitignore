@@ -2,13 +2,14 @@
 acm/
 audio/
 dat/
+int/
 lip/
 msg/
 textgrid/
 txt/
 wav/
 
-# Unknown words file
+# Generated reports
 unknown.txt
 
 # snd2acm binary — download separately

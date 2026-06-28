@@ -5,13 +5,14 @@ A Python script that automates the complete voice modding pipeline for Fallout 2
 ## What it does
 
 ```
-  msg ────────[parse CP1252]────────────────► txt (one per dialog line)
+  msg ────────[parse per-language encoding]─► txt (one per dialog line)
                                               ↕ optional: edit manually here
   audio ──────[ffmpeg normalize + encode]───► wav  (22050 Hz mono 16-bit)
   wav ────────[snd2acm / wine]──────────────► acm
   wav + txt ──[MFA]─────────────────────────► textgrid
-  textgrid (or txt fallback) ───────────────► lip
-  msg + acm + lip + txt ────────────────────► dat/vock.dat
+  textgrid ──────────────────────────────────► lip  (floats: ACM only, no LIP)
+  msg + acm + lip + txt + int ───────────────► dat/vock.dat
+                                               dat/vock_floats.dat  (if floats defined)
 ```
 
 ## Folder structure
@@ -23,10 +24,12 @@ vock/
 ├── vock.py
 ├── config.py             ← Global settings and paths
 ├── skip.py               ← Optional: NPC prefixes to exclude from the pipeline
+├── float.py              ← Optional: float/ambient line definitions (ACM-only, no LIP)
 ├── dictionaries/         ← custom.<language>.dict files
 ├── phonemes/             ← Phoneme mapping tables
 ├── msg/                  ← put your .MSG file(s) here
 ├── audio/                ← put your audio files here (MP3, WAV, FLAC, M4A, …)
+├── int/                  ← put pre-compiled .INT script files here (packed as scripts\*)
 ├── txt/                  ← generated/editable: one .txt per audio line
 ├── wav/                  ← generated: 22050 Hz mono 16-bit PCM
 ├── acm/                  ← generated: Fallout 2 ACM audio files
@@ -34,7 +37,8 @@ vock/
 ├── lip/                  ← generated: Fallout 2 LIP files
 ├── unknown.txt           ← generated: words not recognized by dictionary
 └── dat/
-    └── vock.dat          ← generated: ready-to-install Fallout 2 DAT archive
+    ├── vock.dat          ← generated: ready-to-install Fallout 2 DAT archive
+    └── vock_floats.dat   ← generated: float/ambient audio DAT (if floats defined)
 ```
 
 ## Supported Languages
@@ -63,8 +67,9 @@ Note: [ARPAbet](https://en.wikipedia.org/wiki/ARPABET) is a unique, English-spec
 | `wav` | `audio/*`          | `wav/*.wav`    | Normalise + encode to 22050 Hz mono 16-bit PCM   |
 | `acm` | `wav/*.wav`        | `acm/*.acm`    | Convert to Fallout 2 ACM via `snd2acm.exe`       |
 | `mfa` | `wav/` + `txt/`    | `textgrid/`    | MFA forced alignment → phoneme timing            |
-| `lip` | `textgrid/`+`txt/` | `lip/*.lip`    | Generate Fallout 2 LIP binary files              |
-| `dat` | `msg/`+`acm/`+…    | `dat/vock.dat` | Pack everything into a Fallout 2 DAT2 archive    |
+| `lip` | `textgrid/`        | `lip/*.lip`    | Generate Fallout 2 LIP files (floats skipped)    |
+| `dat` | `msg/`+`acm/`+`lip/`+`txt/`+`int/` | `dat/vock.dat`        | Pack talking-head files into a Fallout 2 DAT2 archive |
+| `dat` | `acm/` (float stems only)           | `dat/vock_floats.dat` | Pack float audio into a separate DAT2 archive (only runs if floats are defined) |
 
 ## Output DAT structure
 
@@ -73,6 +78,7 @@ text\english\dialog\*.msg
 sound\speech\<npc>\*.acm
 sound\speech\<npc>\*.lip
 sound\speech\<npc>\*.txt
+scripts\*.int
 ```
 
 Where `<npc>` is derived automatically from the audio tag, e.g.:
@@ -203,7 +209,7 @@ python3 vock.py --steps msg
 ```
 
 This writes one `.txt` per audio-tagged line into `txt/`.  
-For example, `txt/MOR1.txt` might contain:
+For example, `txt/mor1.txt` might contain:
 
 ```
 What is it? You know I have a lot to do, [Player Name]!
@@ -245,38 +251,31 @@ As characters finish recording and their pipeline outputs are already on disk, y
 
 Add prefixes to `skip.py`**
 
-The prefix is the audio tag stem — the letters before the number. For example, `MOR` covers `MOR1` through `MOR27`. Uncomment a line to skip that character:
+The prefix is the audio tag stem — the letters before the number. For example, `mor` covers `mor1` through `mor27`. Uncomment a line to skip that character:
 
 ```
-# ARTH    # Arthur Pendragon
-# BRIGE   # Bridgekeeper
+# arth    # Arthur Pendragon
+# brige   # Bridgekeeper
 ```
 
 Steps 1–5 (msg, wav, acm, mfa, lip) skip any character listed in `skip.py`. The DAT step always compiles **all** files that already exist on disk, so completed characters are still included in `vock.dat`.
 
-## Dictionary Lookup
+## Float lines
 
-`dict_lookup.py` is a standalone interactive tool that lets you check whether a word is known to MFA before committing it to a `.txt` file. It also loads the custom dictionary if available. The custom words are flagged with `[custom]`.
+Fallout 2 NPCs have two kinds of voiced lines: talking-head dialogue (which requires both ACM and LIP) and ambient floats (which play as overhead text with ACM audio only — no LIP file needed). `float.py` defines which lines are floats so the pipeline can handle them correctly.
 
-```bash
-python3 dict_lookup.py english_us_arpa
+**Format** — one NPC per line, with a comma-separated list of audio tag numbers or ranges:
+
+```python
+# float.py
+mor   21, 22            # tags mor21, mor22
+zaius 37                # tag zaius37
+kaga  6-49              # tags kaga6 through kaga49
 ```
 
-Type words at the prompt to see their pronunciation(s):
+Float lines are detected during the `msg` step. During `mfa` and `lip` they are silently excluded — no TextGrid or LIP is generated for them. During `dat`, float ACM files are packed into a **separate** `vock_floats.dat` archive, while talking-head files go into the normal `vock.dat`.
 
-```
-> geck
-  'geck'  →  G EH1 K  [custom]
-
-> hello
-  hello  →  HH AH0 L OW1
-  hello  →  HH EH0 L OW1
-
-> customword
-  'customword' not found — MFA will assign 'spn' (spoken noise)
-```
-
-Words not found need either a manual text edit or a custom dictionary entry.
+Both DAT files need to be installed: `vock.dat` for dialogue, `vock_floats.dat` for floats.
 
 ## Custom Dictionary
 
@@ -308,11 +307,11 @@ Unknown words (MFA assigned 'spn')
 Add pronunciations for these words to your custom dictionary
 (dictionaries/custom.<mfa_name>.dict) and re-run --steps mfa lip dat
 
-SALLY1.txt
+sally1.txt
   dunton        1.98s – 2.54s
   hmm           2.70s – 3.10s
 
-SALLY2.txt
+sally2.txt
   idjit         2.82s – 3.35s
   shoo          8.36s – 8.97s
   shoo          8.97s – 9.17s
@@ -327,7 +326,11 @@ Typical causes of unknown words:
 
 ## Custom Configuration
 All global settings, file paths, and environment configurations are managed in `config.py`. You can adjust these values to suit your specific project setup or system environment:
-- PATHS: Defines the location of your input/output folders and the path to your snd2acm.exe executable. The optional `skip_chars` key points to a `skip.py` file listing NPC prefixes to exclude from the pipeline.
+- PATHS: Defines the location of your input/output folders and the path to your snd2acm.exe executable.
+  - `skip_chars`: points to `skip.py` — NPC prefixes to exclude from the pipeline.
+  - `float_chars`: points to `float.py` — float/ambient line definitions (ACM-only, no LIP).
+  - `float_dat`: output path for the float DAT archive (default: `./dat/vock_floats.dat`).
+  - `int`: folder of pre-compiled `.INT` script files to pack into the DAT as `scripts\*`.
 - SETTINGS:
   - mfa_env: The name of the conda environment where MFA is installed (default: aligner).
   - lufs: The target loudness for audio normalization (default: -16).
@@ -339,6 +342,7 @@ All global settings, file paths, and environment configurations are managed in `
 - **Universal audio input.** The `wav` step accepts MP3, WAV, FLAC, M4A, AAC, OGG, Opus, WMA — any format FFmpeg can decode. Duration is always read via `ffprobe` for accuracy across all containers.
 - **TXT validation.** During the `wav` step, audio files without a matching `.txt` file are skipped with a clear warning. This prevents untagged or misnamed audio from silently entering the pipeline.
 - **Loudness normalisation.** Audio is normalised to −16 LUFS (EBU R128) during the `wav` step to match original Fallout 2 game files. Can be configured via `config.py`.
+- **Per-language encoding.** MSG and TXT files are read and written using the correct Windows code page for the selected language: CP1252 for Western European languages (English, Spanish, French, German, Italian, Hungarian, Portuguese), CP1250 for Central European (Polish, Czech), and CP1251 for Russian. The code page is selected automatically from `--language`.
 - **Dependency fast-fail.** The script checks for `ffmpeg`, `ffprobe`, `conda`, and `snd2acm.exe` before starting and exits with a clear install message if anything required for the chosen steps is missing.
 
 ## LIP file format
@@ -385,8 +389,8 @@ Copy the specific `.MSG` file you want to edit into `vock/msg/`.
 2. Locate the line you want to add voice to. The format is:
    `{103}{}{What is it? You know I have a lot to do!}`
 3. Add your audio tag in the middle bracket:
-   `{103}{MOR1}{What is it? You know I have a lot to do!}`
-4. Save your audio file as `MOR1.mp3` (or `.wav`, `.flac`, etc.) in `audio/`.
+   `{103}{mor1}{What is it? You know I have a lot to do!}`
+4. Save your audio file as `mor1.mp3` (or `.wav`, `.flac`, etc.) in `audio/`.
    The script matches the audio file to the MSG tag automatically.
 
 ## Other useful tools
