@@ -14,8 +14,11 @@ PATHS = {
     "textgrid":   "./textgrid",
     "lip":        "./lip",
     "dat":        "./dat/vock.dat",
+    "float_dat":  "./dat/vock_floats.dat",
+    "int":        "./int",
     "snd2acm":    "./snd2acm.exe",
-    "skip_chars": "./skip.py",
+    "skip_chars":  "./skip.py",
+    "float_chars": "./float.py",
 }
 
 SETTINGS = {

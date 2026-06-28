@@ -4,29 +4,24 @@
 # 1–5 (msg, wav, acm, mfa, lip). The DAT step always compiles ALL files that
 # already exist on disk, so completed characters are still included in vock.dat.
 #
-# The prefix is the audio tag stem — the part before the number. For example:
-#   MOR     covers MOR1, MOR2 … MOR27   (Morlis)
-#   ARTH    covers ARTH1 … ARTH29       (King Arthur)
-#   BRIGE   covers BRIGE1 … BRIGE17     (Bridgekeeper)
-#
+# The prefix is the audio tag stem — the part before the number.
 # Uncomment a line to skip that character.
 #
 
-# Companions
-DAVIN               # Davin
-
 # Special Encounters
-ARTH                # Arthur Pendragon
-BRIGE               # Bridgekeeper
+arth                # Arthur Pendragon
+brige               # Bridgekeeper
+kaga                # Kaga
 
 # Arroyo
-MOR                 # Morlis
+mor                 # Morlis
 
 # Klamath
-SALLY               # Sally Dunton
-JENNY               # Jenny
+sally               # Sally Dunton
+jenny               # Jenny
 
 # The Den
+eric                # Eric
 
 # Umbra Tribe
 
@@ -35,17 +30,17 @@ JENNY               # Jenny
 # Vault City
 
 # Gecko
+zomak               # Zomak
 
 # Abbey
 
 # Redding
 
 # Broken Hills
-#ZAIUS                # Zaius
+zaius                # Zaius
 
 # New Reno
-CW                  # Christopher Wright
-KEITH               # Keith Wright
+cw                  # Christopher Wright
 
 # NCR
 
@@ -54,7 +49,6 @@ KEITH               # Keith Wright
 # Vault 15
 
 # Navarro
-CMDR                # Navarro Base Commander
 
 # San Francisco
 

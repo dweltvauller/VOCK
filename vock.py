@@ -13,7 +13,7 @@ PIPELINE
   wav ────────[snd2acm / wine]──────────────► acm
   wav + txt ──[MFA]─────────────────────────► textgrid
   textgrid ─────────────────────────────────► lip
-  msg + acm + lip + txt ────────────────────► dat/vock.dat
+  msg + acm + lip + txt + int ──────────────► dat/vock.dat
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FOLDER STRUCTURE (all created automatically)
@@ -26,6 +26,7 @@ FOLDER STRUCTURE (all created automatically)
   ./acm/          ← generated: Fallout 2 ACM files
   ./textgrid/     ← generated: MFA TextGrid files
   ./lip/          ← generated: Fallout 2 LIP files
+  ./int/          ← put pre-compiled Fallout 2 .INT script files here (packed into dat as scripts\*)
   ./unknown.txt   ← generated: words not recognized by the dictionary
   ./dat/vock.dat  ← generated: ready-to-install Fallout 2 DAT archive
 
@@ -50,7 +51,7 @@ USAGE
 
   # Text-correction workflow (human-in-the-loop):
   python3 vock.py --steps msg          # extract TXT files
-  #  … edit txt/MOR1.txt, txt/MOR2.txt, etc. …
+  #  … edit txt/mor1.txt, txt/mor2.txt, etc. …
   python3 vock.py --steps wav mfa lip dat   # resume from audio
 
   # Rebuild just the DAT:
@@ -190,19 +191,19 @@ def make_phoneme_converter(mfa_name: str, module) -> callable:
 def load_skip_prefixes(skip_file: str | None) -> set[str]:
     """
     Read skip.py (or any path set in config.PATHS["skip_chars"]).
-    Returns a set of upper-cased NPC tag prefixes to exclude from the pipeline.
+    Returns a set of lower-cased NPC tag prefixes to exclude from the pipeline.
     Returns an empty set when the file is absent or unset.
 
     File format: one prefix per line, # comments, blank lines ignored.
-        ARTH    # King Arthur — recording complete
-        BRIGE   # Bridge Keeper — complete
+        arth    # King Arthur — recording complete
+        brige   # Bridge Keeper — complete
     """
     if not skip_file or not os.path.isfile(skip_file):
         return set()
     skipped: set[str] = set()
     with open(skip_file, encoding="utf-8") as fh:
         for raw in fh:
-            token = raw.split("#", 1)[0].strip().upper()
+            token = raw.split("#", 1)[0].strip().lower()
             if token:
                 skipped.add(token)
     return skipped
@@ -211,13 +212,77 @@ def load_skip_prefixes(skip_file: str | None) -> set[str]:
 def filter_by_prefix(items: list, skip: set[str], key=lambda x: x[0]) -> list:
     """
     Remove items whose NPC tag prefix (stem with trailing digits stripped) is in *skip*.
-    key(item) must return the stem string (e.g. 'MOR1', 'ARTH12').
+    key(item) must return the stem string (e.g. 'mor1', 'arth12').
     Returns items unchanged when skip is empty.
     """
     if not skip:
         return items
     return [it for it in items
-            if re.sub(r"\d+$", "", key(it).upper()) not in skip]
+            if re.sub(r"\d+$", "", key(it).lower()) not in skip]
+
+
+def load_float_ranges(float_file: str | None) -> dict[str, list[tuple[int, int]]]:
+    """
+    Read float.py (or any path set in config.PATHS["float_chars"]).
+    Returns {PREFIX: [(start, end), …]} mapping float audio-tag-number ranges per NPC prefix.
+    Returns an empty dict when the file is absent or unset.
+
+    File format: PREFIX  start-end  (# comments, blank lines ignored)
+        mor   1-2       # Morlis floats (tags mor1, mor2)
+        zaius 1         # Zaius float   (tag zaius1)
+    Numbers refer to the numeric suffix of the audio tag, not the MSG line number.
+    """
+    result: dict[str, list[tuple[int, int]]] = {}
+    if not float_file or not os.path.isfile(float_file):
+        return result
+    with open(float_file, encoding="utf-8") as fh:
+        for raw in fh:
+            token = raw.split("#", 1)[0].strip()
+            if not token:
+                continue
+            parts = token.split(None, 1)   # split on first whitespace only
+            if len(parts) < 2:
+                continue
+            prefix = parts[0].lower()
+            for chunk in parts[1].split(","):
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
+                if "-" in chunk:
+                    try:
+                        lo, hi = chunk.split("-", 1)
+                        result.setdefault(prefix, []).append((int(lo.strip()), int(hi.strip())))
+                    except ValueError:
+                        print(f"  [warn] float.py: invalid range '{chunk}' for '{prefix}' — skipping")
+                else:
+                    try:
+                        n = int(chunk)
+                        result.setdefault(prefix, []).append((n, n))
+                    except ValueError:
+                        print(f"  [warn] float.py: invalid entry '{chunk}' for '{prefix}' — skipping")
+    return result
+
+
+def is_float_line(tag: str, float_map: dict) -> bool:
+    """Return True if this line should be treated as a float (ACM only, no LIP).
+
+    Matching is done on the numeric suffix of the audio tag (e.g. 'eric3' → 3),
+    not the MSG line number, so ranges in float.py are version-stable.
+    """
+    if not float_map:
+        return False
+    prefix = re.sub(r"\d+$", "", tag.lower())
+    ranges = float_map.get(prefix, [])
+    if not ranges:
+        return False
+    m = re.search(r"\d+$", tag)
+    if not m:
+        return False
+    tag_num = int(m.group())
+    for lo, hi in ranges:
+        if lo <= tag_num <= hi:
+            return True
+    return False
 
 
 def resolve_custom_dict(mfa_name: str, explicit_path: str | None) -> str | None:
@@ -254,19 +319,23 @@ LIP_MULTIPLIER  = 2   # offset = seconds × 2 × 22050
 
 # ─── MSG parser ───────────────────────────────────────────────────────────────
 
-MSG_LINE_RE = re.compile(r"^\s*\{[^}]*\}\s*\{([^}]*)\}\s*\{(.*)\}\s*$")
+MSG_LINE_RE = re.compile(r"^\s*\{([^}]*)\}\s*\{([^}]*)\}\s*\{(.*)\}\s*$")
 
 def parse_msg(path: str, encoding: str = "cp1252") -> list:
-    """Return [(audio_tag, text), …] for lines with a non-empty audio tag."""
+    """Return [(line_num, audio_tag, text), …] for lines with a non-empty audio tag."""
     results = []
     with open(path, encoding=encoding) as fh:
         for line in fh:
             m = MSG_LINE_RE.match(line)
             if not m:
                 continue
-            tag, text = m.group(1).strip(), m.group(2).strip()
+            try:
+                line_num = int(m.group(1).strip())
+            except ValueError:
+                line_num = -1
+            tag, text = m.group(2).strip(), m.group(3).strip()
             if tag:
-                results.append((tag, text))
+                results.append((line_num, tag, text))
     return results
 
 # ─── Audio helpers ────────────────────────────────────────────────────────────
@@ -477,7 +546,7 @@ def write_lip(out_path: str, stem: str, duration: float, events: list) -> None:
     num_phonemes = len(events)
     num_markers  = num_phonemes + 1
     file_length  = round(LIP_MULTIPLIER * LIP_SAMPLE_RATE * duration)
-    acm_field    = stem.upper().encode("ascii")[:8].ljust(8, b"\x00")
+    acm_field    = stem.lower().encode("ascii")[:8].ljust(8, b"\x00")
 
     with open(out_path, "wb") as f:
         f.write(struct.pack(">I", LIP_VERSION))
@@ -525,35 +594,71 @@ def write_lip(out_path: str, stem: str, duration: float, events: list) -> None:
 # Reference: https://fodev.net/files/fo2/dat.html
 
 def _npc_folder(stem: str) -> str:
-    """Derive the 3-letter NPC folder from a stem like MOR1 → MOR."""
-    return re.sub(r"\d+$", "", stem).upper()
+    """Derive the NPC folder from a stem like mor1 → mor."""
+    return re.sub(r"\d+$", "", stem).lower()
 
-def collect_dat_entries(msg_paths, acm_dir, lip_dir, txt_dir, include_acm=True):
-    """Build [(dat_path, local_path), …] pairs with backslash separators."""
+def collect_dat_entries(msg_paths, acm_dir, lip_dir, txt_dir,
+                        include_acm=True, only_stems=None,
+                        include_msg=True, discover_from="lip",
+                        int_dir=None):
+    """
+    Build [(dat_path, local_path), …] pairs with backslash separators.
+
+    only_stems   : if given (set of lowercase stems), restrict output to those stems.
+    include_msg  : whether to include MSG files (set False for the float DAT).
+    discover_from: "lip" — find stems via lip/ dir (default, for talking-head DAT).
+                   "acm" — find stems via acm/ dir (for float DAT, which has no LIP files).
+    """
     entries = []
+
     # MSG files → text\english\dialog\
-    for msg_path in msg_paths:
-        if os.path.isfile(msg_path):
-            msg_name = os.path.basename(msg_path).upper()
-            entries.append((f"text\\english\\dialog\\{msg_name}", msg_path))
-    # Iterate over LIP files to discover stems and NPC folders
-    lip_files = {}
-    if os.path.isdir(lip_dir):
+    if include_msg:
+        for msg_path in msg_paths:
+            if os.path.isfile(msg_path):
+                msg_name = os.path.basename(msg_path).lower()
+                entries.append((f"text\\english\\dialog\\{msg_name}", msg_path))
+
+    # Discover stems from the requested source directory
+    stem_files: dict[str, str] = {}   # stem → path of the discovery file (lip or acm)
+    if discover_from == "lip" and os.path.isdir(lip_dir):
         for f in os.listdir(lip_dir):
-            if f.upper().endswith(".LIP"):
-                stem = os.path.splitext(f)[0].upper()
-                lip_files[stem] = os.path.join(lip_dir, f)
-    for stem, lip_path in sorted(lip_files.items()):
+            if f.lower().endswith(".lip"):
+                stem = os.path.splitext(f)[0].lower()
+                stem_files[stem] = os.path.join(lip_dir, f)
+    elif discover_from == "acm" and os.path.isdir(acm_dir):
+        for f in os.listdir(acm_dir):
+            if f.lower().endswith(".acm"):
+                stem = os.path.splitext(f)[0].lower()
+                stem_files[stem] = os.path.join(acm_dir, f)
+
+    # Apply stem whitelist
+    if only_stems is not None:
+        normalised = {s.lower() for s in only_stems}
+        stem_files = {s: p for s, p in stem_files.items() if s in normalised}
+
+    for stem in sorted(stem_files):
         folder = _npc_folder(stem)
-        base   = f"sound\\Speech\\{folder}"
-        entries.append((f"{base}\\{stem}.lip", lip_path))
+        base   = f"sound\\speech\\{folder}"
+        # LIP file — only present for talking-head stems
+        lip_path = os.path.join(lip_dir, stem + ".lip")
+        if os.path.isfile(lip_path):
+            entries.append((f"{base}\\{stem}.lip", lip_path))
+        # ACM file
         if include_acm:
             acm_path = os.path.join(acm_dir, stem + ".acm")
             if os.path.isfile(acm_path):
                 entries.append((f"{base}\\{stem}.acm", acm_path))
+        # TXT file
         txt_path = os.path.join(txt_dir, stem + ".txt")
         if os.path.isfile(txt_path):
             entries.append((f"{base}\\{stem}.txt", txt_path))
+
+    # INT files → scripts\
+    if int_dir and os.path.isdir(int_dir):
+        for f in sorted(os.listdir(int_dir)):
+            if f.lower().endswith(".int"):
+                entries.append((f"scripts\\{f.lower()}", os.path.join(int_dir, f)))
+
     return entries
 
 def write_dat2(out_path: str, entries: list) -> None:
@@ -656,7 +761,7 @@ def _scan_msg_dir(path: str) -> list:
     found = sorted(
         os.path.join(path, f)
         for f in os.listdir(path)
-        if f.upper().endswith(".MSG"))
+        if f.lower().endswith(".msg"))
     if not found:
         sys.exit(f"No .MSG files found in '{path}/'")
     return found
@@ -685,14 +790,18 @@ def main():
     acmdir      = config.PATHS["acm"]
     textgriddir = config.PATHS["textgrid"]
     lipdir      = config.PATHS["lip"]
-    datfile     = config.PATHS["dat"]
-    snd2acm_cfg = config.PATHS["snd2acm"]
-    skip_chars_file = config.PATHS.get("skip_chars")   # optional key; None if absent
+    datfile          = config.PATHS["dat"]
+    float_datfile    = config.PATHS.get("float_dat", "./dat/vock_floats.dat")
+    intdir           = config.PATHS.get("int", "./int")
+    snd2acm_cfg      = config.PATHS["snd2acm"]
+    skip_chars_file  = config.PATHS.get("skip_chars")   # optional key; None if absent
     mfa_env     = config.SETTINGS["mfa_env"]
     lufs        = config.SETTINGS["lufs"]
     no_norm     = config.SETTINGS["no_norm"]
 
     skip_prefixes = load_skip_prefixes(skip_chars_file)
+    float_chars_file = config.PATHS.get("float_chars")
+    float_map        = load_float_ranges(float_chars_file)
 
     # ── Language & Dictionary Resolution ──────────────────────────────────────
     mfa_name        = LANGUAGE_CONFIG[args.language]
@@ -714,6 +823,12 @@ def main():
     print(f"  Phoneme Map    : phonemes_{mfa_name}.py")
     if skip_prefixes:
         print(f"  Skipping       : {', '.join(sorted(skip_prefixes))}")
+    if float_map:
+        float_summary = ", ".join(
+            f"{p}({','.join(f'{lo}-{hi}' for lo, hi in ranges)})"
+            for p, ranges in sorted(float_map.items())
+        )
+        print(f"  Floats         : {float_summary}")
 
     # Resolve which steps to run
     if args.steps:
@@ -726,6 +841,22 @@ def main():
 
     # Fast-fail dependency check
     check_dependencies(run, snd2acm_cfg, mfa_env)
+
+    # ── Derive float_stems from MSG files (always, so mfa/lip steps see it even
+    #    when the msg step is skipped) ─────────────────────────────────────────
+    float_stems: set[str] = set()
+    if float_map and os.path.isdir(msgdir):
+        for _mp in sorted(
+            os.path.join(msgdir, f)
+            for f in os.listdir(msgdir)
+            if f.lower().endswith(".msg")
+        ):
+            try:
+                for ln, tag, _text in parse_msg(_mp, encoding=lang_enc(args.language)):
+                    if is_float_line(tag, float_map):
+                        float_stems.add(tag.lower())
+            except Exception:
+                pass
 
     # ── Pipeline state ────────────────────────────────────────────────────────
     msg_paths  = []
@@ -755,11 +886,11 @@ def main():
         if not all_entries:
             sys.exit("No audio-tagged lines found in any MSG file.")
 
-        all_entries = filter_by_prefix(all_entries, skip_prefixes, key=lambda x: x[0])
+        all_entries = filter_by_prefix(all_entries, skip_prefixes, key=lambda x: x[1])
 
         os.makedirs(txtdir, exist_ok=True)
         written = 0
-        for tag, text in all_entries:
+        for _line_num, tag, text in all_entries:
             out = os.path.join(txtdir, f"{tag}.txt")
             # Only overwrite if content differs (preserve manual edits)
             if os.path.isfile(out):
@@ -859,7 +990,7 @@ def main():
         # Populate wav_pairs from existing standardised WAVs
         if os.path.isdir(wavdir):
             for f in sorted(os.listdir(wavdir)):
-                if f.upper().endswith(".WAV"):
+                if f.lower().endswith(".wav"):
                     stem     = os.path.splitext(f)[0]
                     txt_path = os.path.join(txtdir, stem + ".txt")
                     if os.path.isfile(txt_path) and \
@@ -892,9 +1023,16 @@ def main():
         print_section("STEP 3 — Convert wav/ → acm/  [skipped]")
 
     # ── STEP 4: MFA alignment ─────────────────────────────────────────────────
+    # Only talking-head lines need MFA alignment and LIP files.
+    head_wav_pairs = [(s, w, t) for s, w, t in wav_pairs
+                      if s.lower() not in float_stems]
+
     if "mfa" in run:
         print_section("STEP 4 — MFA forced alignment → TextGrid")
-        if not wav_pairs:
+        if float_stems and len(head_wav_pairs) < len(wav_pairs):
+            n_floats = len(wav_pairs) - len(head_wav_pairs)
+            print(f"  ({n_floats} float line(s) excluded from alignment)")
+        if not head_wav_pairs:
             print("  No WAV files available — run the 'wav' step first.")
         else:
             import tempfile
@@ -916,10 +1054,10 @@ def main():
                           f"main MFA dictionary for '{mfa_name}' could not be located "
                           f"— passing '{mfa_name}' to MFA directly.")
 
-            # Group wav_pairs by NPC tag prefix (e.g. MOR, ARTH, ZAIUS …)
+            # Group head_wav_pairs by NPC tag prefix (e.g. MOR, ARTH, ZAIUS …)
             groups: dict[str, list] = {}
-            for item in wav_pairs:
-                prefix = re.sub(r"\d+$", "", item[0].upper())
+            for item in head_wav_pairs:
+                prefix = re.sub(r"\d+$", "", item[0].lower())
                 groups.setdefault(prefix, []).append(item)
 
             total_tg      = 0
@@ -967,11 +1105,14 @@ def main():
     # ── STEP 5: LIP generation ────────────────────────────────────────────────
     if "lip" in run:
         print_section("STEP 5 — Generate LIP files")
-        if not wav_pairs:
+        if not head_wav_pairs:
             print("  No WAV files available for duration — run the 'wav' step first.")
         else:
             os.makedirs(lipdir, exist_ok=True)
-            for stem, wav_path, _txt_path in wav_pairs:
+            if float_stems and len(head_wav_pairs) < len(wav_pairs):
+                n_floats = len(wav_pairs) - len(head_wav_pairs)
+                print(f"  ({n_floats} float line(s) excluded — no LIP needed)")
+            for stem, wav_path, _txt_path in head_wav_pairs:
                 lip_path = os.path.join(lipdir, stem + ".lip")
                 tg_path  = os.path.join(textgriddir, stem + ".TextGrid")
 
@@ -996,21 +1137,29 @@ def main():
                     print(f"  [error] {stem}: Missing TextGrid (MFA failed or was skipped)")
                     lip_fail += 1
 
-            print(f"\n  {lip_ok} MFA successfully mapped  +  {lip_fail} failed")
+            print(f"\n  {lip_ok} MFA successfully mapped  +  {lip_fail} failed"
+                  + (f"  ({len(wav_pairs) - len(head_wav_pairs)} floats skipped)"
+                     if float_stems else ""))
     else:
         print_section("STEP 5 — Generate LIP files  [skipped]")
 
     # ── STEP 6: Build DAT ────────────────────────────────────────────────────
     if "dat" in run:
-        print_section("STEP 6 — Build vock.dat")
+        include_acm = ("acm" not in (args.skip or []))
         os.makedirs(os.path.dirname(datfile) or ".", exist_ok=True)
+
+        # ── 6a: Talking-head DAT ──────────────────────────────────────────────
+        print_section("STEP 6a — Build vock.dat  (talking heads)")
         try:
             dat_entries = collect_dat_entries(
-                msg_paths   = msg_paths,
-                acm_dir     = acmdir,
-                lip_dir     = lipdir,
-                txt_dir     = txtdir,
-                include_acm = ("acm" not in (args.skip or [])),
+                msg_paths    = msg_paths,
+                acm_dir      = acmdir,
+                lip_dir      = lipdir,
+                txt_dir      = txtdir,
+                include_acm  = include_acm,
+                include_msg  = True,
+                discover_from = "lip",
+                int_dir      = intdir,
             )
             if not dat_entries:
                 print("  No files to pack — skipping.")
@@ -1021,8 +1170,34 @@ def main():
                       f"({len(dat_entries)} file(s), {total_kb:.1f} KB)")
         except Exception as e:
             print(f"  [error] DAT creation failed: {e}")
+
+        # ── 6b: Float DAT (only when float lines exist) ───────────────────────
+        if float_stems:
+            print_section("STEP 6b — Build vock_floats.dat  (floats)")
+            os.makedirs(os.path.dirname(float_datfile) or ".", exist_ok=True)
+            try:
+                float_entries = collect_dat_entries(
+                    msg_paths     = [],
+                    acm_dir       = acmdir,
+                    lip_dir       = lipdir,
+                    txt_dir       = txtdir,
+                    include_acm   = include_acm,
+                    only_stems    = float_stems,
+                    include_msg   = False,
+                    discover_from = "acm",
+                    int_dir       = None,      # INT scripts go in vock.dat only
+                )
+                if not float_entries:
+                    print("  No float ACM files found — run the 'acm' step first.")
+                else:
+                    write_dat2(float_datfile, float_entries)
+                    total_kb = os.path.getsize(float_datfile) / 1024
+                    print(f"  wrote  {float_datfile}  "
+                          f"({len(float_entries)} file(s), {total_kb:.1f} KB)")
+            except Exception as e:
+                print(f"  [error] Float DAT creation failed: {e}")
     else:
-        print_section("STEP 6 — Build vock.dat  [skipped]")
+        print_section("STEP 6 — Build DAT  [skipped]")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'═'*60}")
@@ -1034,10 +1209,16 @@ def main():
     print(f"  WAV files  : {len(wav_pairs)}")
     print(f"  ACM files  : {acm_ok if 'acm' in run else 'skipped'}")
     if "lip" in run:
-        print(f"  LIP files  : {lip_ok} MFA generated  ({lip_fail} failed)")
+        float_note = f"  {len(float_stems)} float(s) skipped" if float_stems else ""
+        print(f"  LIP files  : {lip_ok} MFA generated  ({lip_fail} failed){float_note}")
     else:
         print("  LIP files  : skipped")
-    print(f"  DAT file   : {datfile if 'dat' in run else 'skipped'}")
+    if "dat" in run:
+        print(f"  DAT file   : {datfile}")
+        if float_stems:
+            print(f"  Float DAT  : {float_datfile}")
+    else:
+        print(f"  DAT file   : skipped")
     print()
 
 
