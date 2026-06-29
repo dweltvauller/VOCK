@@ -186,39 +186,41 @@ def make_phoneme_converter(mfa_name: str, module) -> callable:
 
     return _convert
 
-# ─── Character skip file ──────────────────────────────────────────────────────
+# ─── Character NPC file ───────────────────────────────────────────────────────
 
-def load_skip_prefixes(skip_file: str | None) -> set[str]:
+def load_npc_prefixes(npc_file: str | None) -> set[str]:
     """
-    Read skip.py (or any path set in config.PATHS["skip_chars"]).
-    Returns a set of lower-cased NPC tag prefixes to exclude from the pipeline.
-    Returns an empty set when the file is absent or unset.
+    Read npc.py (or any path set in config.PATHS["npc_chars"]).
+    Returns a set of lower-cased NPC tag prefixes to include in the pipeline.
+    Returns an empty set when the file is absent or unset — meaning process all.
 
     File format: one prefix per line, # comments, blank lines ignored.
-        arth    # King Arthur — recording complete
-        brige   # Bridge Keeper — complete
+        arth    # King Arthur
+        ahs7    # Oz
     """
-    if not skip_file or not os.path.isfile(skip_file):
+    if not npc_file or not os.path.isfile(npc_file):
         return set()
-    skipped: set[str] = set()
-    with open(skip_file, encoding="utf-8") as fh:
+    included: set[str] = set()
+    with open(npc_file, encoding="utf-8") as fh:
         for raw in fh:
             token = raw.split("#", 1)[0].strip().lower()
             if token:
-                skipped.add(token)
-    return skipped
+                included.add(token)
+    return included
 
 
-def filter_by_prefix(items: list, skip: set[str], key=lambda x: x[0]) -> list:
+def filter_by_prefix(items: list, include: set[str], key=lambda x: x[0]) -> list:
     """
-    Remove items whose NPC tag prefix (stem with trailing digits stripped) is in *skip*.
-    key(item) must return the stem string (e.g. 'mor1', 'arth12').
-    Returns items unchanged when skip is empty.
+    Keep items whose NPC tag starts with a prefix listed in *include*.
+    key(item) must return the tag string (e.g. 'mor1', 'ahs71').
+    Returns items unchanged when include is empty (process all).
+    Prefixes are matched longest-first to avoid shorter prefixes shadowing longer ones.
     """
-    if not skip:
+    if not include:
         return items
+    prefixes = sorted(include, key=len, reverse=True)
     return [it for it in items
-            if re.sub(r"\d+$", "", key(it).lower()) not in skip]
+            if any(key(it).lower().startswith(p) for p in prefixes)]
 
 
 def load_float_ranges(float_file: str | None) -> dict[str, list[tuple[int, int]]]:
@@ -268,20 +270,24 @@ def is_float_line(tag: str, float_map: dict) -> bool:
 
     Matching is done on the numeric suffix of the audio tag (e.g. 'eric3' → 3),
     not the MSG line number, so ranges in float.py are version-stable.
+
+    Prefix matching uses startswith (longest key first), mirroring filter_by_prefix,
+    so digit-ending prefixes like 'ahs7' are handled correctly — e.g. 'ahs739' maps
+    to prefix 'ahs7' with suffix '39', not prefix 'ahs' with suffix '739'.
     """
     if not float_map:
         return False
-    prefix = re.sub(r"\d+$", "", tag.lower())
-    ranges = float_map.get(prefix, [])
-    if not ranges:
-        return False
-    m = re.search(r"\d+$", tag)
-    if not m:
-        return False
-    tag_num = int(m.group())
-    for lo, hi in ranges:
-        if lo <= tag_num <= hi:
-            return True
+    tag_lower = tag.lower()
+    for prefix in sorted(float_map, key=len, reverse=True):
+        if tag_lower.startswith(prefix):
+            suffix = tag_lower[len(prefix):]
+            if not suffix.isdigit():
+                break
+            tag_num = int(suffix)
+            for lo, hi in float_map[prefix]:
+                if lo <= tag_num <= hi:
+                    return True
+            break
     return False
 
 
@@ -794,12 +800,12 @@ def main():
     float_datfile    = config.PATHS.get("float_dat", "./dat/vock_floats.dat")
     intdir           = config.PATHS.get("int", "./int")
     snd2acm_cfg      = config.PATHS["snd2acm"]
-    skip_chars_file  = config.PATHS.get("skip_chars")   # optional key; None if absent
+    npc_chars_file   = config.PATHS.get("npc_chars")    # optional key; None if absent
     mfa_env     = config.SETTINGS["mfa_env"]
     lufs        = config.SETTINGS["lufs"]
     no_norm     = config.SETTINGS["no_norm"]
 
-    skip_prefixes = load_skip_prefixes(skip_chars_file)
+    npc_prefixes = load_npc_prefixes(npc_chars_file)
     float_chars_file = config.PATHS.get("float_chars")
     float_map        = load_float_ranges(float_chars_file)
 
@@ -821,8 +827,10 @@ def main():
     print(f"  Dictionary     : {main_dict_print}")
     print(f"  Custom Dict    : {custom_dict_print}")
     print(f"  Phoneme Map    : phonemes_{mfa_name}.py")
-    if skip_prefixes:
-        print(f"  Skipping       : {', '.join(sorted(skip_prefixes))}")
+    if npc_prefixes:
+        print(f"  NPC filter     : {', '.join(sorted(npc_prefixes))}")
+    else:
+        print(f"  NPC filter     : all")
     if float_map:
         float_summary = ", ".join(
             f"{p}({','.join(f'{lo}-{hi}' for lo, hi in ranges)})"
@@ -886,7 +894,7 @@ def main():
         if not all_entries:
             sys.exit("No audio-tagged lines found in any MSG file.")
 
-        all_entries = filter_by_prefix(all_entries, skip_prefixes, key=lambda x: x[1])
+        all_entries = filter_by_prefix(all_entries, npc_prefixes, key=lambda x: x[1])
 
         os.makedirs(txtdir, exist_ok=True)
         written = 0
@@ -949,7 +957,7 @@ def main():
 
         enc_ok = 0
         skipped = 0
-        for stem in filter_by_prefix(sorted(audio_map), skip_prefixes, key=lambda x: x):
+        for stem in filter_by_prefix(sorted(audio_map), npc_prefixes, key=lambda x: x):
             src_path = audio_map[stem]
             # Validate: must have a matching TXT
             txt_path = os.path.join(txtdir, stem + ".txt")
@@ -994,7 +1002,7 @@ def main():
                     stem     = os.path.splitext(f)[0]
                     txt_path = os.path.join(txtdir, stem + ".txt")
                     if os.path.isfile(txt_path) and \
-                            filter_by_prefix([(stem,)], skip_prefixes, key=lambda x: x[0]):
+                            filter_by_prefix([(stem,)], npc_prefixes, key=lambda x: x[0]):
                         wav_pairs.append((stem, os.path.join(wavdir, f), txt_path))
 
     # ── STEP 3: wav/ → ACM ───────────────────────────────────────────────────

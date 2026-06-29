@@ -15,9 +15,6 @@ unknown.txt
 # snd2acm binary — download separately
 snd2acm.exe
 
-# User-specific optional files
-skip.py
-
 # Python
 __pycache__/
 *.py[cod]
@@ -27,4 +24,6 @@ __pycache__/
 # macOS
 .DS_Store
 
-# MF
+# MFA temporary folders
+mfa_*/
+fv_corpus_*/

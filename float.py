@@ -5,32 +5,50 @@
 # Numbers are the numeric suffix of the audio tag, NOT MSG line numbers.
 #
 
-# acmorlis
+# acmorlis - Morlis
 mor  21, 22
 
-# ecarthur
+# amonk5 - Brother Paul
+paul 1-4, 23
+
+# dcmetzge - Metzger
+metzg 1, 81-86
+
+# dctubby - Tubby
+tubby 14-19
+
+# ecarthur - Arthur Pendragon
 arth 13-29
 
-# ecbridge
+# ecbridge - Bridgekeeper
 brige 10-17
 
-# eckaga
+# eckaga - Kaga
 kaga  6-49
 
-# gczomak
+# fcoz7 - AHS-7
+ahs7 1, 39, 40
+
+# gcskeeter - Skeeter
+skeet 1-5
+
+# gczomak - Zomak the Destroyer
 zomak 20, 21
 
-# hceric
+# hceric - Eric
 eric 1
 
-# hczaius
+# hczaius - Zaius
 zaius 37
 
-# kcjenny
+# kcjenny - Jenny
 jenny 22
 
-# kcsally
+# kcsally - Sally Dunton
 sally 28
 
-# ncchrwri
+# kctorr - Torr Buckner
+torr 1-6, 30-47, 50, 53-61
+
+# ncchrwri - Chris Wright
 cw 1-14

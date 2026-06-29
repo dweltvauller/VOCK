@@ -17,7 +17,7 @@ PATHS = {
     "float_dat":  "./dat/vock_floats.dat",
     "int":        "./int",
     "snd2acm":    "./snd2acm.exe",
-    "skip_chars":  "./skip.py",
+    "npc_chars":   "./npc.py",
     "float_chars": "./float.py",
 }
 
