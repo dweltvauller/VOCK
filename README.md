@@ -23,6 +23,7 @@ All folders are created automatically or configured via `config.py`.
 vock/
 ├── vock.py
 ├── config.py             ← Global settings and paths
+├── npc.py                ← Optional: NPC prefixes to include (omit to process all)
 ├── float.py              ← Optional: float/ambient line definitions (ACM-only, no LIP)
 ├── dictionaries/         ← custom.<language>.dict files
 ├── phonemes/             ← Phoneme mapping tables
@@ -91,64 +92,7 @@ sound\speech\mor\mor1.txt
 
 ## Requirements
 
-### 1. Environment Setup (Windows)
-
-WSL (Windows Subsystem for Linux) is recommended. Open PowerShell as Administrator:
-
-```powershell
-wsl --install
-```
-
-Follow the prompts in the new terminal window to create your Linux username and password.
-
-### 2. System Dependencies (Linux / WSL)
-
-```bash
-sudo apt update && sudo apt upgrade -y
-```
-
-### 3. FFmpeg (required for `wav` and `lip` steps)
-
-```bash
-sudo apt install ffmpeg -y
-```
-
-### 4. snd2acm (required for `acm` step)
-
-The only known ACM encoder for Fallout 2, by ABel/TeamX.
-
-Download: https://fodev.net/files/mirrors/teamx-utils/snd2acm.rar
-
-Extract and place `snd2acm.exe` next to `vock.py`. On Linux also install Wine:
-
-```bash
-sudo apt install wine -y
-```
-
-### 5. Montreal Forced Aligner — MFA (required for `mfa` step)
-
-```bash
-# Install Miniconda
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash Miniconda3-latest-Linux-x86_64.sh -b
-~/miniconda3/bin/conda init bash && exec bash
-
-# Accept the ToS
-conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
-conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-
-# Create the MFA environment
-conda create -n aligner -c conda-forge montreal-forced-aligner python=3.10 -y
-conda activate aligner
-
-# Download models for ARPAbet
-mfa model download acoustic   english_us_arpa
-mfa model download dictionary english_us_arpa
-
-# Download models for other languages, where <language> = spanish, english, etc.
-mfa model download acoustic   <language>_mfa
-mfa model download dictionary <language>_mfa
-```
+See [docs/setup.md](docs/setup.md) for full installation instructions covering WSL, FFmpeg, snd2acm, and MFA.
 
 ## Usage
 
@@ -244,6 +188,21 @@ If you run `python3 vock.py` again after editing a `.txt` file, the `msg` step
 will notice the existing file differs from the MSG source and print
 `[kept manual edit]` — your correction is safe.
 
+## Selecting specific NPCs
+
+`npc.py` lets you focus the pipeline on a subset of characters. If the file is absent or empty, all characters are processed. If it contains entries, **only those prefixes** are processed.
+
+The prefix is the audio tag stem — the letters before the number. For example, `mor` covers `mor1` through `mor27`.
+
+```python
+# npc.py
+mor     # Morlis
+zaius   # Zaius
+ahs7    # AHS-7
+```
+
+This applies to steps 1–5 (msg, wav, acm, mfa, lip). The `dat` step always compiles all files already on disk, so characters you processed in a previous run are still included in `vock.dat`.
+
 ## Float lines
 
 Fallout 2 NPCs have two kinds of voiced lines: talking-head dialogue (which requires both ACM and LIP) and ambient floats (which play as overhead text with ACM audio only — no LIP file needed). `float.py` defines which lines are floats so the pipeline can handle them correctly.
@@ -311,6 +270,7 @@ Typical causes of unknown words:
 ## Custom Configuration
 All global settings, file paths, and environment configurations are managed in `config.py`. You can adjust these values to suit your specific project setup or system environment:
 - PATHS: Defines the location of your input/output folders and the path to your snd2acm.exe executable.
+  - `npc_chars`: points to `npc.py` — NPC prefixes to include (omit or leave empty to process all).
   - `float_chars`: points to `float.py` — float/ambient line definitions (ACM-only, no LIP).
   - `float_dat`: output path for the float DAT archive (default: `./dat/vock_floats.dat`).
   - `int`: folder of pre-compiled `.INT` script files to pack into the DAT as `scripts\*`.
@@ -328,20 +288,9 @@ All global settings, file paths, and environment configurations are managed in `
 - **Per-language encoding.** MSG and TXT files are read and written using the correct Windows code page for the selected language: CP1252 for Western European languages (English, Spanish, French, German, Italian, Hungarian, Portuguese), CP1250 for Central European (Polish, Czech), and CP1251 for Russian. The code page is selected automatically from `--language`.
 - **Dependency fast-fail.** The script checks for `ffmpeg`, `ffprobe`, `conda`, and `snd2acm.exe` before starting and exits with a clear install message if anything required for the chosen steps is missing.
 
-## LIP file format
+## File formats
 
-The LIP binary format was reverse-engineered from Black_Electric's LIPS.py and validated against LIP Editor. Key constants:
-
-- Version: `0x00000002`
-- Unknown constant at `0x04`: `0x00005800`
-- Sample offset formula: `round(seconds × 2 × 22050)`
-- ACM filename field: 8 bytes, uppercase, null-padded, followed by `VOC\0`
-
-Format documented at https://fodev.net/files/fo2/lip.html
-
-## DAT file format
-
-Format documented at https://fodev.net/files/fo2/dat.html
+LIP and DAT binary format documentation: [docs/formats.md](docs/formats.md)
 
 ## How to obtain the MSG file
 
@@ -379,4 +328,3 @@ Copy the specific `.MSG` file you want to edit into `vock/msg/`.
 ## Other useful tools
 
 - LIP Editor: https://fodev.net/files/mirrors/teamx-utils/LIPEditor0.96b.rar
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
