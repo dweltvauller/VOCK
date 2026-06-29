@@ -23,7 +23,6 @@ All folders are created automatically or configured via `config.py`.
 vock/
 ├── vock.py
 ├── config.py             ← Global settings and paths
-├── skip.py               ← Optional: NPC prefixes to exclude from the pipeline
 ├── float.py              ← Optional: float/ambient line definitions (ACM-only, no LIP)
 ├── dictionaries/         ← custom.<language>.dict files
 ├── phonemes/             ← Phoneme mapping tables
@@ -245,21 +244,6 @@ If you run `python3 vock.py` again after editing a `.txt` file, the `msg` step
 will notice the existing file differs from the MSG source and print
 `[kept manual edit]` — your correction is safe.
 
-## Skipping completed characters
-
-As characters finish recording and their pipeline outputs are already on disk, you can exclude them from future runs using `skip.py`. This prevents re-encoding, re-aligning, and re-generating files that haven't changed.
-
-Add prefixes to `skip.py`**
-
-The prefix is the audio tag stem — the letters before the number. For example, `mor` covers `mor1` through `mor27`. Uncomment a line to skip that character:
-
-```
-# arth    # Arthur Pendragon
-# brige   # Bridgekeeper
-```
-
-Steps 1–5 (msg, wav, acm, mfa, lip) skip any character listed in `skip.py`. The DAT step always compiles **all** files that already exist on disk, so completed characters are still included in `vock.dat`.
-
 ## Float lines
 
 Fallout 2 NPCs have two kinds of voiced lines: talking-head dialogue (which requires both ACM and LIP) and ambient floats (which play as overhead text with ACM audio only — no LIP file needed). `float.py` defines which lines are floats so the pipeline can handle them correctly.
@@ -327,7 +311,6 @@ Typical causes of unknown words:
 ## Custom Configuration
 All global settings, file paths, and environment configurations are managed in `config.py`. You can adjust these values to suit your specific project setup or system environment:
 - PATHS: Defines the location of your input/output folders and the path to your snd2acm.exe executable.
-  - `skip_chars`: points to `skip.py` — NPC prefixes to exclude from the pipeline.
   - `float_chars`: points to `float.py` — float/ambient line definitions (ACM-only, no LIP).
   - `float_dat`: output path for the float DAT archive (default: `./dat/vock_floats.dat`).
   - `int`: folder of pre-compiled `.INT` script files to pack into the DAT as `scripts\*`.
@@ -396,3 +379,4 @@ Copy the specific `.MSG` file you want to edit into `vock/msg/`.
 ## Other useful tools
 
 - LIP Editor: https://fodev.net/files/mirrors/teamx-utils/LIPEditor0.96b.rar
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
