@@ -645,7 +645,7 @@ def collect_dat_entries(msg_paths, acm_dir, lip_dir, txt_dir,
     for stem in sorted(stem_files):
         folder = _npc_folder(stem)
         base   = f"sound\\speech\\{folder}"
-        # LIP file — only present for talking-head stems
+        # LIP file — present for talking-head stems and floats (included as a safety net)
         lip_path = os.path.join(lip_dir, stem + ".lip")
         if os.path.isfile(lip_path):
             entries.append((f"{base}\\{stem}.lip", lip_path))
@@ -1031,15 +1031,17 @@ def main():
         print_section("STEP 3 — Convert wav/ → acm/  [skipped]")
 
     # ── STEP 4: MFA alignment ─────────────────────────────────────────────────
-    # Only talking-head lines need MFA alignment and LIP files.
-    head_wav_pairs = [(s, w, t) for s, w, t in wav_pairs
-                      if s.lower() not in float_stems]
+    # All lines get MFA alignment and LIP files — floats included so that
+    # vock_floats.dat carries a LIP as a safety net in case a line was
+    # mis-classified as a float.
+    head_wav_pairs  = wav_pairs
+    float_wav_pairs = [(s, w, t) for s, w, t in wav_pairs
+                       if s.lower() in float_stems]
 
     if "mfa" in run:
         print_section("STEP 4 — MFA forced alignment → TextGrid")
-        if float_stems and len(head_wav_pairs) < len(wav_pairs):
-            n_floats = len(wav_pairs) - len(head_wav_pairs)
-            print(f"  ({n_floats} float line(s) excluded from alignment)")
+        if float_wav_pairs:
+            print(f"  ({len(float_wav_pairs)} float line(s) included — TextGrid + LIP will be generated)")
         if not head_wav_pairs:
             print("  No WAV files available — run the 'wav' step first.")
         else:
@@ -1117,9 +1119,8 @@ def main():
             print("  No WAV files available for duration — run the 'wav' step first.")
         else:
             os.makedirs(lipdir, exist_ok=True)
-            if float_stems and len(head_wav_pairs) < len(wav_pairs):
-                n_floats = len(wav_pairs) - len(head_wav_pairs)
-                print(f"  ({n_floats} float line(s) excluded — no LIP needed)")
+            if float_wav_pairs:
+                print(f"  ({len(float_wav_pairs)} float line(s) included — LIP files packed into vock_floats.dat)")
             for stem, wav_path, _txt_path in head_wav_pairs:
                 lip_path = os.path.join(lipdir, stem + ".lip")
                 tg_path  = os.path.join(textgriddir, stem + ".TextGrid")
@@ -1217,7 +1218,7 @@ def main():
     print(f"  WAV files  : {len(wav_pairs)}")
     print(f"  ACM files  : {acm_ok if 'acm' in run else 'skipped'}")
     if "lip" in run:
-        float_note = f"  {len(float_stems)} float(s) skipped" if float_stems else ""
+        float_note = f"  ({len(float_wav_pairs)} float LIP(s) included in vock_floats.dat)" if float_wav_pairs else ""
         print(f"  LIP files  : {lip_ok} MFA generated  ({lip_fail} failed){float_note}")
     else:
         print("  LIP files  : skipped")
