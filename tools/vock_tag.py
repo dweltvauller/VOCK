@@ -562,4 +562,32 @@ def run(prefix):
     missing = all_referenced - set(msg_lines)
     entries = []
     for num in sorted(missing):
-       
+        label = []
+        if num in combined["npc_head"]:  label.append("npc_head")
+        if num in combined["npc_float"]: label.append("npc_float")
+        if num in combined["pc_head"]:   label.append("pc_head")
+        if num in combined["display"]:   label.append("display")
+        entries.append("  {" + str(num) + "}  [not in msg -- used as: " + ", ".join(label) + "]")
+    section("MISSING FROM MSG  (in SSL, not in msg)", entries)
+
+    if combined["dynamic"]:
+        print("\n-- DYNAMIC REFS (unresolved) " + "-" * 23)
+        for ssl_lineno, desc in combined["dynamic"]:
+            print("  ssl:" + str(ssl_lineno) + "  " + desc)
+
+    total_tagged = len(tags)
+    already = sum(1 for n in tags if msg_lines.get(n, {}).get("tag"))
+    print("\n-- SUMMARY " + "-" * 41)
+    print("  Tags to assign : " + str(total_tagged)
+          + "  (" + prefix + "1 to " + prefix + str(total_tagged) + ")")
+    print("  Written        : " + str(len(written)))
+    print("  Already tagged : " + str(already))
+    print("  Flattened      : " + str(flattened))
+    print("  Skipped (tag≠''): " + str(len(skipped)))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python3 tools/vock_tag.py <prefix>", file=sys.stderr)
+        sys.exit(1)
+    run(sys.argv[1].strip())

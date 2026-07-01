@@ -291,4 +291,53 @@ All global settings, file paths, and environment configurations are managed in `
 - **Universal audio input.** The `wav` step accepts MP3, WAV, FLAC, M4A, AAC, OGG, Opus, WMA — any format FFmpeg can decode. Duration is always read via `ffprobe` for accuracy across all containers.
 - **TXT validation.** During the `wav` step, audio files without a matching `.txt` file are skipped with a clear warning. This prevents untagged or misnamed audio from silently entering the pipeline.
 - **Loudness normalisation.** Audio is normalised to −16 LUFS (EBU R128) during the `wav` step to match original Fallout 2 game files. Can be configured via `vock.cfg`.
-- **Per-language encoding.** MSG and TXT files are read and written using the correct Windows code page for the selected language: CP1
+- **Per-language encoding.** MSG and TXT files are read and written using the correct Windows code page for the selected language: CP1252 for Western European languages (English, Spanish, French, German, Italian, Hungarian, Portuguese), CP1250 for Central European (Polish, Czech), and CP1251 for Russian. The code page is selected automatically from `--language`.
+- **Dependency fast-fail.** The script checks for `ffmpeg`, `ffprobe`, `conda`, and `snd2acm.exe` before starting and exits with a clear install message if anything required for the chosen steps is missing.
+
+## Tools
+
+Standalone utility scripts live in `tools/` — see [tools/tools.md](tools/tools.md) for full details.
+
+- **`dict_lookup.py`** — interactive MFA pronunciation dictionary lookup. Type a word, get its ARPA/IPA transcription(s), with fuzzy suggestions if it's not found.
+- **`msg_localize.py`** — tags foreign-language MSG files (from a sibling RPU repo) with the audio tags from your source-language MSGs, then rebuilds `vock.dat` with the localized MSGs added. Output goes to the `loc` folder configured in `vock.cfg`.
+
+## File formats
+
+LIP and DAT binary format documentation: [docs/formats.md](docs/formats.md)
+
+## How to obtain the MSG file
+
+You must own a legal copy of Fallout 2.
+
+**fo2dat** unpacks Fallout 2 DAT files. Build from source:
+
+```bash
+sudo apt install rustc cargo -y
+git clone https://github.com/adamkewley/fo2dat
+cd fo2dat
+cargo build --release
+sudo cp target/release/fo2dat /usr/local/bin/
+```
+
+Extract dialogue files from your `master.dat`:
+
+```bash
+mkdir master
+fo2dat -xf master.dat -C master
+```
+
+Copy the specific `.MSG` file you want to edit into `vock/msg/`.
+
+## How to edit the MSG file
+
+1. Open your `.MSG` file (e.g. `ACMORLIS.MSG`) in a text editor.
+2. Locate the line you want to add voice to. The format is:
+   `{103}{}{What is it? You know I have a lot to do!}`
+3. Add your audio tag in the middle bracket:
+   `{103}{mor1}{What is it? You know I have a lot to do!}`
+4. Save your audio file as `mor1.mp3` (or `.wav`, `.flac`, etc.) in `audio/`.
+   The script matches the audio file to the MSG tag automatically.
+
+## Other useful tools
+
+- LIP Editor: https://fodev.net/files/mirrors/teamx-utils/LIPEditor0.96b.rar

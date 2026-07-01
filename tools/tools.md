@@ -64,4 +64,31 @@ python3 tools/msg_localize.py [options]
 | `--dat-out PATH` | `vock/loc` (from `PATHS["loc"]`) | Output folder for rebuilt DATs |
 | `--dat-files FILE ...` | `vock.dat` (from `PATHS["dat"]`) | DAT filenames to rebuild |
 | `--encoding ENC` | `cp1252` | Fallback encoding for MSG files |
-| `--lang
+| `--langs LANG ...` | all non-source languages | Languages to process (9 supported: english, german, french, spanish, italian, polish, russian, czech, hungarian) |
+| `--dry-run` | — | Preview changes without writing |
+| `--no-dat` | — | Tag MSGs but skip DAT rebuild |
+
+---
+
+## vock_tag.py
+
+Assigns sequential audio tags (e.g. `mor1`, `mor2`, ...) to a character's talking-head and float lines in their MSG file, by cross-referencing the SSL script(s) that reference that MSG. Only touches lines with an empty tag field `{}` — already-tagged lines are left alone. The source MSG under `msg/` is never modified — the tagged result is written to a separate `tag/` folder instead.
+
+**Dependencies:** None (stdlib only)
+
+**Configuration:** Read from `vock.cfg`'s `[paths]`:
+- `msg` — source MSG folder (resolved against `project_root`, like the main pipeline). Read-only — never written to.
+- `tag` — output folder for tagged MSG copies (resolved against `project_root`; created automatically if missing).
+- `characters` — the character table (`msg_stem, name, prefix, ssl_stems, head`), loaded dynamically from whatever `.py` file it points to.
+- `scripts_src` — this project's own SSL source (flat folder, typically only the handful of characters whose dialog was modified for this mod).
+- `rpu_scripts_src` — base RP SSL source folder (default `../rpu/scripts_src`), resolved against `vock.cfg`'s own folder rather than `project_root`, since the RPU repo is a sibling of `vock/` itself.
+
+**SSL lookup order:** for each `ssl_stem` on the character's entry, the project's own `scripts_src` is checked first; if not found there, it falls back to `rpu_scripts_src` (searched recursively across area subfolders), the same "project first, RPU fallback" pattern `msg_localize.py` uses for translations.
+
+**Usage:**
+```
+python3 tools/vock_tag.py <prefix>
+python3 tools/vock_tag.py brige
+```
+
+Prints a report of talking-head lines, float lines, PC lines, unused lines, and any lines referenced in SSL but missing from the MSG — then writes the assigned tags to `tag/<msg_stem>.msg` (preserving original encoding and line endings). If a tagged copy already exists in `tag/`, it's used as the read source instead of the original, so re-running on the same prefix builds on earlier tagging rather than starting over.

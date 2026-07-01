@@ -267,4 +267,28 @@ def main():
         print(f"\n[WARN] No .dat files in {dat_src}")
         return
 
-    dat_out.mkdir(parents=True, exist_ok=True
+    dat_out.mkdir(parents=True, exist_ok=True)
+    print(f"\nRebuilding {len(dat_files)} DAT file(s) from {dat_src}/ -> {dat_out}/...")
+    for dat_path in dat_files:
+        print(f"\n  [{dat_path.name}]")
+        existing = read_dat(dat_path)
+        print(f"    Read {len(existing)} existing entries")
+        entries = {k.upper(): v for k, v in existing}
+        added = replaced = 0
+        for internal, local_path in tagged_files:
+            content = local_path.read_bytes()
+            key = internal.upper()
+            if key in entries: replaced += 1
+            else: added += 1
+            entries[key] = content
+        print(f"    +{added} new entries, {replaced} replaced")
+        path_map = {k.upper(): k for k, _ in existing}
+        for internal, _ in tagged_files:
+            path_map[internal.upper()] = internal
+        write_dat(dat_out / dat_path.name, [(path_map[k], v) for k, v in entries.items()])
+
+    print("\nDone.")
+
+
+if __name__ == "__main__":
+    main()

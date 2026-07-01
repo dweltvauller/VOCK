@@ -1255,4 +1255,13 @@ def main():
     else:
         print("  LIP files  : skipped")
     if "dat" in run:
-  
+        print(f"  DAT file   : {datfile}")
+        if float_stems:
+            print(f"  Float DAT  : {float_datfile}")
+    else:
+        print(f"  DAT file   : skipped")
+    print()
+
+
+if __name__ == "__main__":
+    main()
