@@ -26,7 +26,7 @@ FOLDER STRUCTURE (all created automatically)
   ./acm/          ← generated: Fallout 2 ACM files
   ./textgrid/     ← generated: MFA TextGrid files
   ./lip/          ← generated: Fallout 2 LIP files
-  ./int/          ← put pre-compiled Fallout 2 .INT script files here (packed into dat as scripts\*)
+  ./scripts/      ← put pre-compiled Fallout 2 .INT script files here (packed into dat as scripts\*)
   ./unknown.txt   ← generated: words not recognized by the dictionary
   ./dat/vock.dat  ← generated: ready-to-install Fallout 2 DAT archive
 
@@ -66,7 +66,7 @@ USAGE
   # All CLI options:
   python3 vock.py [--language LANG] [--steps STEP [STEP ...]] [--skip STEP [STEP ...]]
 
-  All paths and settings are configured in config.py.
+  All paths and settings are configured in vock.cfg.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SUPPORTED LANGUAGES  (--language)
@@ -88,6 +88,7 @@ SUPPORTED LANGUAGES  (--language)
 """
 
 import argparse
+import configparser
 import importlib.util
 import json
 import os
@@ -96,7 +97,22 @@ import shutil
 import struct
 import subprocess
 import sys
-import config
+
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vock.cfg")
+_parser = configparser.ConfigParser(inline_comment_prefixes=("#",))
+if not _parser.read(_CONFIG_PATH, encoding="utf-8"):
+    sys.exit(f"[ERROR] Could not read config file: {_CONFIG_PATH}")
+
+config = {
+    "language":     _parser.get("general", "language"),
+    "project_root": _parser.get("general", "project_root", fallback="./"),
+    "paths":    dict(_parser["paths"]),
+    "settings": {
+        "mfa_env": _parser.get("settings", "mfa_env"),
+        "lufs":    _parser.getfloat("settings", "lufs"),
+        "no_norm": _parser.getboolean("settings", "no_norm"),
+    },
+}
 
 # ─── Language configuration ───────────────────────────────────────────────────
 
@@ -186,11 +202,11 @@ def make_phoneme_converter(mfa_name: str, module) -> callable:
 
     return _convert
 
-# ─── Character NPC file ───────────────────────────────────────────────────────
+# ─── Character NPC include list ───────────────────────────────────────────────
 
 def load_npc_prefixes(npc_file: str | None) -> set[str]:
     """
-    Read npc.py (or any path set in config.PATHS["npc_chars"]).
+    Read npc_filter.cfg (or any path set in config["paths"]["npc_filter"]).
     Returns a set of lower-cased NPC tag prefixes to include in the pipeline.
     Returns an empty set when the file is absent or unset — meaning process all.
 
@@ -225,7 +241,7 @@ def filter_by_prefix(items: list, include: set[str], key=lambda x: x[0]) -> list
 
 def load_float_ranges(float_file: str | None) -> dict[str, list[tuple[int, int]]]:
     """
-    Read float.py (or any path set in config.PATHS["float_chars"]).
+    Read float_filter.cfg (or any path set in config["paths"]["float_filter"]).
     Returns {PREFIX: [(start, end), …]} mapping float audio-tag-number ranges per NPC prefix.
     Returns an empty dict when the file is absent or unset.
 
@@ -255,13 +271,13 @@ def load_float_ranges(float_file: str | None) -> dict[str, list[tuple[int, int]]
                         lo, hi = chunk.split("-", 1)
                         result.setdefault(prefix, []).append((int(lo.strip()), int(hi.strip())))
                     except ValueError:
-                        print(f"  [warn] float.py: invalid range '{chunk}' for '{prefix}' — skipping")
+                        print(f"  [warn] float_filter.cfg: invalid range '{chunk}' for '{prefix}' — skipping")
                 else:
                     try:
                         n = int(chunk)
                         result.setdefault(prefix, []).append((n, n))
                     except ValueError:
-                        print(f"  [warn] float.py: invalid entry '{chunk}' for '{prefix}' — skipping")
+                        print(f"  [warn] float_filter.cfg: invalid entry '{chunk}' for '{prefix}' — skipping")
     return result
 
 
@@ -269,7 +285,7 @@ def is_float_line(tag: str, float_map: dict) -> bool:
     """Return True if this line should be treated as a float (ACM only, no LIP).
 
     Matching is done on the numeric suffix of the audio tag (e.g. 'eric3' → 3),
-    not the MSG line number, so ranges in float.py are version-stable.
+    not the MSG line number, so ranges in float_filter.cfg are version-stable.
 
     Prefix matching uses startswith (longest key first), mirroring filter_by_prefix,
     so digit-ending prefixes like 'ahs7' are handled correctly — e.g. 'ahs739' maps
@@ -519,6 +535,17 @@ def merge_dictionaries(main_dict: str, custom_dict: str, out_path: str) -> None:
         f.write(custom)
         f.write("\n")
 
+def resolve_path(rel_path: str | None) -> str | None:
+    """Resolve a config["paths"] entry against config["project_root"].
+
+    Falls back to "./" if project_root isn't set, so existing vock.cfg
+    files without it keep working unchanged.
+    """
+    if rel_path is None:
+        return None
+    root = config.get("project_root", "./")
+    return os.path.normpath(os.path.join(root, rel_path))
+
 def find_snd2acm(hint: str = None) -> str | None:
     candidates = []
     if hint:
@@ -763,7 +790,7 @@ def _scan_msg_dir(path: str) -> list:
     if not os.path.isdir(path):
         sys.exit(f"MSG directory not found: '{path}'\n"
                  "Create a 'msg/' folder and put your .MSG file(s) in it, "
-                 "or update the 'msg' path in config.py.")
+                 "or update the 'msg' path in vock.cfg.")
     found = sorted(
         os.path.join(path, f)
         for f in os.listdir(path)
@@ -778,9 +805,9 @@ def main():
         description="V.O.C.K. — Vocal Output Creation Kit",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--language", default=config.LANGUAGE,
+    parser.add_argument("--language", default=config["language"],
         choices=list(LANGUAGE_CONFIG.keys()),
-        help=f"MFA language / phoneme set (default from config.py: {config.LANGUAGE}). "
+        help=f"MFA language / phoneme set (default from vock.cfg: {config['language']}). "
              f"Choices: {', '.join(LANGUAGE_CONFIG)}")
     parser.add_argument("--steps", nargs="+", metavar="STEP", choices=ALL_STEPS,
         help=f"Run ONLY these step(s). Available: {', '.join(ALL_STEPS)}")
@@ -788,26 +815,31 @@ def main():
         help="Skip these step(s) from the full pipeline.")
     args = parser.parse_args()
 
-    # ── Resolve all paths and settings from config.py ─────────────────────────
-    msgdir      = config.PATHS["msg"]
-    audiodir    = config.PATHS["audio"]
-    txtdir      = config.PATHS["txt"]
-    wavdir      = config.PATHS["wav"]
-    acmdir      = config.PATHS["acm"]
-    textgriddir = config.PATHS["textgrid"]
-    lipdir      = config.PATHS["lip"]
-    datfile          = config.PATHS["dat"]
-    float_datfile    = config.PATHS.get("float_dat", "./dat/vock_floats.dat")
-    intdir           = config.PATHS.get("int", "./int")
-    snd2acm_cfg      = config.PATHS["snd2acm"]
-    npc_chars_file   = config.PATHS.get("npc_chars")    # optional key; None if absent
-    mfa_env     = config.SETTINGS["mfa_env"]
-    lufs        = config.SETTINGS["lufs"]
-    no_norm     = config.SETTINGS["no_norm"]
+    # ── Resolve all paths and settings from vock.cfg ──────────────────────────
+    # Every paths entry is resolved against config["project_root"] (default "./"),
+    # so pointing project_root at another project's folder retargets the whole
+    # pipeline without touching anything else here.
+    paths = config["paths"]
+    msgdir      = resolve_path(paths["msg"])
+    audiodir    = resolve_path(paths["audio"])
+    txtdir      = resolve_path(paths["txt"])
+    wavdir      = resolve_path(paths["wav"])
+    acmdir      = resolve_path(paths["acm"])
+    textgriddir = resolve_path(paths["textgrid"])
+    lipdir      = resolve_path(paths["lip"])
+    datfile          = resolve_path(paths["dat"])
+    float_datfile    = resolve_path(paths.get("float_dat", "./dat/vock_floats.dat"))
+    intdir           = resolve_path(paths.get("scripts", "./scripts"))
+    snd2acm_cfg      = resolve_path(paths["snd2acm"])
+    npc_filter_file  = resolve_path(paths.get("npc_filter"))    # optional key; None if absent
+    settings    = config["settings"]
+    mfa_env     = settings["mfa_env"]
+    lufs        = settings["lufs"]
+    no_norm     = settings["no_norm"]
 
-    npc_prefixes = load_npc_prefixes(npc_chars_file)
-    float_chars_file = config.PATHS.get("float_chars")
-    float_map        = load_float_ranges(float_chars_file)
+    npc_prefixes = load_npc_prefixes(npc_filter_file)
+    float_filter_file = resolve_path(paths.get("float_filter"))
+    float_map         = load_float_ranges(float_filter_file)
 
     # ── Language & Dictionary Resolution ──────────────────────────────────────
     mfa_name        = LANGUAGE_CONFIG[args.language]
@@ -1223,13 +1255,4 @@ def main():
     else:
         print("  LIP files  : skipped")
     if "dat" in run:
-        print(f"  DAT file   : {datfile}")
-        if float_stems:
-            print(f"  Float DAT  : {float_datfile}")
-    else:
-        print(f"  DAT file   : skipped")
-    print()
-
-
-if __name__ == "__main__":
-    main()
+  

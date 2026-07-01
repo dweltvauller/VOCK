@@ -11,25 +11,25 @@ A Python script that automates the complete voice modding pipeline for Fallout 2
   wav ────────[snd2acm / wine]──────────────► acm
   wav + txt ──[MFA]─────────────────────────► textgrid
   textgrid ──────────────────────────────────► lip  (floats: ACM only, no LIP)
-  msg + acm + lip + txt + int ───────────────► dat/vock.dat
+  msg + acm + lip + txt + scripts ────────────► dat/vock.dat
                                                dat/vock_floats.dat  (if floats defined)
 ```
 
 ## Folder structure
 
-All folders are created automatically or configured via `config.py`.
+All folders are created automatically or configured via `vock.cfg`.
 
 ```
 vock/
 ├── vock.py
-├── config.py             ← Global settings and paths
-├── npc.py                ← Optional: NPC prefixes to include (omit to process all)
-├── float.py              ← Optional: float/ambient line definitions (ACM-only, no LIP)
+├── vock.cfg              ← Global settings and paths
+├── npc_filter.cfg         ← Optional: NPC prefixes to include (omit to process all)
+├── float_filter.cfg       ← Optional: float/ambient line definitions (ACM-only, no LIP)
 ├── dictionaries/         ← custom.<language>.dict files
 ├── phonemes/             ← Phoneme mapping tables
 ├── msg/                  ← put your .MSG file(s) here
 ├── audio/                ← put your audio files here (MP3, WAV, FLAC, M4A, …)
-├── int/                  ← put pre-compiled .INT script files here (packed as scripts\*)
+├── scripts/              ← put pre-compiled .INT script files here (packed as scripts\*)
 ├── txt/                  ← generated/editable: one .txt per audio line
 ├── wav/                  ← generated: 22050 Hz mono 16-bit PCM
 ├── acm/                  ← generated: Fallout 2 ACM audio files
@@ -43,7 +43,7 @@ vock/
 
 ## Supported Languages
 
-V.O.C.K. supports multiple languages configured via config.py or by using the `--language` flag. If an NPC speaks multiple languages (e.g., Spanglish), the recommendation is to use the dominant language and add any non-dominant words to the custom dictionary.
+V.O.C.K. supports multiple languages configured via vock.cfg or by using the `--language` flag. If an NPC speaks multiple languages (e.g., Spanglish), the recommendation is to use the dominant language and add any non-dominant words to the custom dictionary.
 
 - arpabet
 - english
@@ -68,7 +68,7 @@ Note: [ARPAbet](https://en.wikipedia.org/wiki/ARPABET) is a unique, English-spec
 | `acm` | `wav/*.wav`        | `acm/*.acm`    | Convert to Fallout 2 ACM via `snd2acm.exe`       |
 | `mfa` | `wav/` + `txt/`    | `textgrid/`    | MFA forced alignment → phoneme timing            |
 | `lip` | `textgrid/`        | `lip/*.lip`    | Generate Fallout 2 LIP files (floats skipped)    |
-| `dat` | `msg/`+`acm/`+`lip/`+`txt/`+`int/` | `dat/vock.dat`        | Pack talking-head files into a Fallout 2 DAT2 archive |
+| `dat` | `msg/`+`acm/`+`lip/`+`txt/`+`scripts/` | `dat/vock.dat`        | Pack talking-head files into a Fallout 2 DAT2 archive |
 | `dat` | `acm/` (float stems only)           | `dat/vock_floats.dat` | Pack float audio into a separate DAT2 archive (only runs if floats are defined) |
 
 ## Output DAT structure
@@ -190,12 +190,12 @@ will notice the existing file differs from the MSG source and print
 
 ## Selecting specific NPCs
 
-`npc.py` lets you focus the pipeline on a subset of characters. If the file is absent or empty, all characters are processed. If it contains entries, **only those prefixes** are processed.
+`npc_filter.cfg` lets you focus the pipeline on a subset of characters. If the file is absent or empty, all characters are processed. If it contains entries, **only those prefixes** are processed.
 
 The prefix is the audio tag stem — the letters before the number. For example, `mor` covers `mor1` through `mor27`.
 
-```python
-# npc.py
+```
+# npc_filter.cfg
 mor     # Morlis
 zaius   # Zaius
 ahs7    # AHS-7
@@ -205,12 +205,12 @@ This applies to steps 1–5 (msg, wav, acm, mfa, lip). The `dat` step always com
 
 ## Float lines
 
-Fallout 2 NPCs have two kinds of voiced lines: talking-head dialogue (which requires both ACM and LIP) and ambient floats (which play as overhead text with ACM audio only — no LIP file needed). `float.py` defines which lines are floats so the pipeline can handle them correctly.
+Fallout 2 NPCs have two kinds of voiced lines: talking-head dialogue (which requires both ACM and LIP) and ambient floats (which play as overhead text with ACM audio only — no LIP file needed). `float_filter.cfg` defines which lines are floats so the pipeline can handle them correctly.
 
 **Format** — one NPC per line, with a comma-separated list of audio tag numbers or ranges:
 
-```python
-# float.py
+```
+# float_filter.cfg
 mor   21, 22            # tags mor21, mor22
 zaius 37                # tag zaius37
 kaga  6-49              # tags kaga6 through kaga49
@@ -268,63 +268,27 @@ Typical causes of unknown words:
 - **Stage directions** — `(chuckle)`, `[Player Name]` → remove or replace in the `.txt` file.
 
 ## Custom Configuration
-All global settings, file paths, and environment configurations are managed in `config.py`. You can adjust these values to suit your specific project setup or system environment:
-- PATHS: Defines the location of your input/output folders and the path to your snd2acm.exe executable.
-  - `npc_chars`: points to `npc.py` — NPC prefixes to include (omit or leave empty to process all).
-  - `float_chars`: points to `float.py` — float/ambient line definitions (ACM-only, no LIP).
+All global settings, file paths, and environment configurations are managed in `vock.cfg`. You can adjust these values to suit your specific project setup or system environment:
+- `project_root`: Root folder that every path in `[paths]` is resolved against (default: `./`, this folder). Point it at another project's folder (e.g. `../vock-fo2/`) to run the pipeline against that project's `msg/`, `audio/`, `txt/`, etc. without moving or duplicating anything.
+- `[paths]`: Defines the location of your input/output folders and the path to your snd2acm.exe executable, all relative to `project_root`.
+  - `npc_filter`: points to `npc_filter.cfg` — NPC prefixes to include (omit or leave empty to process all).
+  - `float_filter`: points to `float_filter.cfg` — float/ambient line definitions (ACM-only, no LIP).
   - `float_dat`: output path for the float DAT archive (default: `./dat/vock_floats.dat`).
-  - `int`: folder of pre-compiled `.INT` script files to pack into the DAT as `scripts\*`.
-- SETTINGS:
-  - mfa_env: The name of the conda environment where MFA is installed (default: aligner).
-  - lufs: The target loudness for audio normalization (default: -16).
-  - no_norm: Set to True to disable automatic audio loudness normalization.
-- LANGUAGE: Sets the default language/phoneme set used by the pipeline if no --language flag is provided.
+  - `scripts`: folder of pre-compiled `.INT` script files to pack into the DAT as `scripts\*`.
+  - `scripts_src`: folder of this project's own `.SSL` source scripts (flat, only for characters whose dialog logic was modified for this mod). Used by `tools/vock_tag.py`, which falls back to the base RP scripts in `rpu_scripts_src` (searched recursively) for everything else.
+  - `rpu_scripts_src` / `rpu_text`: paths into the sibling RPU repo (default: `../rpu/scripts_src` and `../rpu/data/text`) used by `tools/vock_tag.py` and `tools/msg_localize.py` respectively. Unlike the other `[paths]` entries, these resolve against `vock.cfg`'s own folder, not `project_root` — the RPU repo is shared infrastructure next to `vock/`, not part of whichever project `project_root` points at.
+  - `characters`: points to `characters.py` — the character table (`msg_stem, name, prefix, ssl_stems, head`) used by `tools/vock_tag.py` to look up a character's MSG file and SSL script(s) by audio tag prefix.
+  - `tag`: output folder for `tools/vock_tag.py` (default: `./tag`) — tagged MSG copies are written here; the source `msg/` files are never modified.
+  - `loc`: output folder for localization tooling (see [Tools](#tools) below) — tagged foreign-language MSGs and rebuilt localized DATs.
+- `[settings]`:
+  - `mfa_env`: The name of the conda environment where MFA is installed (default: `aligner`).
+  - `lufs`: The target loudness for audio normalization (default: `-16.0`).
+  - `no_norm`: Set to `true` to disable automatic audio loudness normalization.
+- `language`: Sets the default language/phoneme set used by the pipeline if no --language flag is provided.
 
 ## Notes
 
 - **Universal audio input.** The `wav` step accepts MP3, WAV, FLAC, M4A, AAC, OGG, Opus, WMA — any format FFmpeg can decode. Duration is always read via `ffprobe` for accuracy across all containers.
 - **TXT validation.** During the `wav` step, audio files without a matching `.txt` file are skipped with a clear warning. This prevents untagged or misnamed audio from silently entering the pipeline.
-- **Loudness normalisation.** Audio is normalised to −16 LUFS (EBU R128) during the `wav` step to match original Fallout 2 game files. Can be configured via `config.py`.
-- **Per-language encoding.** MSG and TXT files are read and written using the correct Windows code page for the selected language: CP1252 for Western European languages (English, Spanish, French, German, Italian, Hungarian, Portuguese), CP1250 for Central European (Polish, Czech), and CP1251 for Russian. The code page is selected automatically from `--language`.
-- **Dependency fast-fail.** The script checks for `ffmpeg`, `ffprobe`, `conda`, and `snd2acm.exe` before starting and exits with a clear install message if anything required for the chosen steps is missing.
-
-## File formats
-
-LIP and DAT binary format documentation: [docs/formats.md](docs/formats.md)
-
-## How to obtain the MSG file
-
-You must own a legal copy of Fallout 2.
-
-**fo2dat** unpacks Fallout 2 DAT files. Build from source:
-
-```bash
-sudo apt install rustc cargo -y
-git clone https://github.com/adamkewley/fo2dat
-cd fo2dat
-cargo build --release
-sudo cp target/release/fo2dat /usr/local/bin/
-```
-
-Extract dialogue files from your `master.dat`:
-
-```bash
-mkdir master
-fo2dat -xf master.dat -C master
-```
-
-Copy the specific `.MSG` file you want to edit into `vock/msg/`.
-
-## How to edit the MSG file
-
-1. Open your `.MSG` file (e.g. `ACMORLIS.MSG`) in a text editor.
-2. Locate the line you want to add voice to. The format is:
-   `{103}{}{What is it? You know I have a lot to do!}`
-3. Add your audio tag in the middle bracket:
-   `{103}{mor1}{What is it? You know I have a lot to do!}`
-4. Save your audio file as `mor1.mp3` (or `.wav`, `.flac`, etc.) in `audio/`.
-   The script matches the audio file to the MSG tag automatically.
-
-## Other useful tools
-
-- LIP Editor: https://fodev.net/files/mirrors/teamx-utils/LIPEditor0.96b.rar
+- **Loudness normalisation.** Audio is normalised to −16 LUFS (EBU R128) during the `wav` step to match original Fallout 2 game files. Can be configured via `vock.cfg`.
+- **Per-language encoding.** MSG and TXT files are read and written using the correct Windows code page for the selected language: CP1
