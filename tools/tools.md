@@ -29,6 +29,8 @@ Custom entries take priority over MFA entries for any word they define.
 
 ## msg_localize.py
 
+This tool is under development.
+
 Reads audio tags from the source-language MSG files (set by `language` in `vock.cfg`), injects them into matching foreign-language MSG files from an RPU repo, then rebuilds `vock.dat` with the tagged foreign MSGs added.
 
 **Dependencies:** None (stdlib only)
@@ -92,3 +94,10 @@ python3 tools/vock_tag.py brige
 ```
 
 Prints a report of talking-head lines, float lines, PC lines, unused lines, and any lines referenced in SSL but missing from the MSG — then writes the assigned tags to `tag/<msg_stem>.msg` (preserving original encoding and line endings). If a tagged copy already exists in `tag/`, it's used as the read source instead of the original, so re-running on the same prefix builds on earlier tagging rather than starting over.
+
+
+## dialogue_sim.py
+
+This tool is under development.
+
+Point this tool to a msg and ssl file, and it will let you simulate the dialogue with that particular NPC.
