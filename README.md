@@ -25,6 +25,7 @@ vock/
 ├── vock.cfg              ← Global settings and paths
 ├── npc_filter.cfg         ← Optional: NPC prefixes to include (omit to process all)
 ├── float_filter.cfg       ← Optional: float/ambient line definitions (ACM-only, no LIP)
+├── mfa_lock.cfg           ← Optional: audio tags whose TextGrid MFA must never regenerate
 ├── dictionaries/         ← custom.<language>.dict files
 ├── phonemes/             ← Phoneme mapping tables
 ├── msg/                  ← put your .MSG file(s) here
@@ -220,6 +221,21 @@ Float lines are detected during the `msg` step. During `mfa` and `lip` they are 
 
 Both DAT files need to be installed: `vock.dat` for dialogue, `vock_floats.dat` for floats.
 
+## MFA alignment lock
+
+MFA's `--single_speaker` mode pools acoustic normalization statistics across every file in an NPC's batch. Usually that helps, but if one line is an acoustic outlier for that character — unusually dramatic pacing, a long held vowel, a big mid-line pause — the pooled stats can end up mismatched for that line specifically, corrupting its alignment (a very long single-phoneme hold is the usual symptom) even though the rest of the batch aligns fine. Re-running MFA on the offending file *by itself*, outside its NPC's batch, typically fixes it since there's nothing left to skew the normalization.
+
+Once you've hand-corrected a TextGrid this way, `mfa_lock.cfg` keeps it from being silently overwritten and re-broken the next time you run the full pipeline (or just `--steps mfa`) over that NPC.
+
+**Format** — one audio tag per line:
+
+```
+# mfa_lock.cfg
+arth2   # batch-alignment artifact, fixed by isolated re-alignment
+```
+
+Locked tags are excluded from their NPC's MFA corpus entirely — their existing TextGrid is left untouched, and the `lip` step reads it as normal. If a locked tag has no TextGrid on disk, `mfa` prints a warning (there's nothing to protect, and `lip` will fail for it). Remove a tag from the file whenever you want MFA to re-align it — e.g. after editing its audio or text.
+
 ## Custom Dictionary
 
 If MFA fails to align specific game nouns (e.g., `GECK`, `Arroyo`), add them to the dictionary file corresponding to your language (e.g., `dictionaries/custom.english_us_arpa.dict`).
@@ -273,6 +289,7 @@ All global settings, file paths, and environment configurations are managed in `
 - `[paths]`: Defines the location of your input/output folders and the path to your snd2acm.exe executable, all relative to `project_root`.
   - `npc_filter`: points to `npc_filter.cfg` — NPC prefixes to include (omit or leave empty to process all).
   - `float_filter`: points to `float_filter.cfg` — float/ambient line definitions (ACM-only, no LIP).
+  - `mfa_lock`: points to `mfa_lock.cfg` — audio tags whose existing TextGrid `mfa` must never regenerate.
   - `float_dat`: output path for the float DAT archive (default: `./dat/vock_floats.dat`).
   - `scripts`: folder of pre-compiled `.INT` script files to pack into the DAT as `scripts\*`.
   - `scripts_src`: folder of this project's own `.SSL` source scripts (flat, only for characters whose dialog logic was modified for this mod). Used by `tools/vock_tag.py`, which falls back to the base RP scripts in `rpu_scripts_src` (searched recursively) for everything else.
