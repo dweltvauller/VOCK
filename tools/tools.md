@@ -139,7 +139,7 @@ python3 tools/textgrid_confidence.py --csv report.csv
 
 ## audio_processing_check.py
 
-Audits source audio for consistent processing -- written for a corpus where noise floor reduction, a noise gate, a click filter, and ~0.2s of leading/trailing silence padding were applied by hand to some files and not others, over time. Measures each file's leading and trailing edge independently (silence duration vs. a target, noise floor dB within that silence window, and a heuristic count of isolated click transients), purely from the audio itself -- no before/after reference needed. None of the numbers say a file is "wrong" on their own; they say whether it looks like it went through the same processing as the rest of the corpus. Silence duration is the objective one (you set an exact target); floor and click count are comparative -- sort by them and look for the natural break between already-edited files and the rest. See the tool's own `--help` for the full method, including why click counts are the least trustworthy of the three.
+Audits source audio for consistent processing -- written for a corpus where noise floor reduction, a noise gate, a click filter, and ~0.2s of leading/trailing silence padding were applied by hand to some files and not others, over time. Measures each file's leading and trailing edge independently (silence duration vs. a target, noise floor dB within that silence window, and a heuristic count of isolated click transients), purely from the audio itself -- no before/after reference needed. A fifth column, `floor_dB`, reports the noise floor across the *whole file* (median dB of every quiet window, not just the two edges), so a noisy mid-line pause shows up even when both edges are clean -- useful since the edge columns are specifically about whether edge processing was applied, not the recording's overall background noise. None of the numbers say a file is "wrong" on their own; they say whether it looks like it went through the same processing as the rest of the corpus. Silence duration is the objective one (you set an exact target); floor and click count are comparative -- sort by them and look for the natural break between already-edited files and the rest. See the tool's own `--help` for the full method, including why click counts are the least trustworthy of the three.
 
 **Dependencies:** `numpy`, `ffmpeg` (decodes any format ffmpeg reads, same as vock.py's own `wav` step)
 
@@ -169,7 +169,7 @@ python3 tools/audio_processing_check.py --csv report.csv
 | `--threshold DB` | `-35.0` | dB level above which a window counts as speech, not silence |
 | `--target SECONDS` | `0.2` | Target leading/trailing silence duration (short end) |
 | `--max-silence SECONDS` | `0.5` | Silence at or above this is flagged as noticeably long (`^`) -- long enough to read as the game lagging |
-| `--sort {lead,trail,floor,clicks}` | `trail` | Sort key |
+| `--sort {lead,trail,floor,file-floor,clicks}` | `trail` | Sort key -- `floor` is worst edge floor, `file-floor` is worst whole-file floor |
 | `--below SECONDS` | — | Only show files whose leading OR trailing silence is below N seconds |
 | `--above SECONDS` | — | Only show files whose leading OR trailing silence is at or above N seconds |
 | `--limit N` | — | Only show the first N rows after sorting |
