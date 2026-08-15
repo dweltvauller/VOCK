@@ -26,6 +26,16 @@ For each file it measures, independently for the leading and trailing edge:
   - noise floor -- the median dB level *within* that silence window. A
     gated/denoised file reads close to digital silence (well under -50dB);
     an untouched recording's room tone/hiss usually sits much higher.
+
+  A fifth, whole-file measure sits alongside the per-edge pair:
+
+  - file floor -- the median dB level across every quiet window in the
+    whole file (any stretch below --threshold, not just the leading/
+    trailing padding), so a mid-line pause with audible hiss or hum shows
+    up even when both edges happen to be clean. This is the more reliable
+    read on the recording's actual background noise; the lead/trail floor
+    columns are specifically about whether edge processing was applied.
+
   - click count -- isolated sample-to-sample transients within the silence
     window, the kind a click filter removes. Heuristic and approximate:
     a large jump relative to the window's own local baseline, grouped into
@@ -123,12 +133,18 @@ def _first_speech_window(is_speech: np.ndarray, min_run: int) -> int:
     return len(is_speech)
 
 
-def measure_edge_silence(samples: np.ndarray, sr: int, threshold_db: float,
-                          window_ms: int = WINDOW_MS) -> tuple:
+def file_noise_floor(db: np.ndarray, threshold_db: float) -> float | None:
+    """Median dB across every window in the file that reads as silence
+    (below threshold_db), not just the leading/trailing edges -- so a
+    noisy mid-line pause counts even when both edges are clean."""
+    silent = db[db <= threshold_db]
+    return float(np.median(silent)) if len(silent) > 0 else None
+
+
+def measure_edge_silence(samples: np.ndarray, db: np.ndarray, win: int, sr: int,
+                          threshold_db: float) -> tuple:
     """Returns (leading_s, leading_floor_db, leading_clicks,
                 trailing_s, trailing_floor_db, trailing_clicks)."""
-    db = windowed_db(samples, sr, window_ms)
-    win = max(1, int(sr * window_ms / 1000))
     if len(db) == 0:
         return (0.0, None, 0, 0.0, None, 0)
 
@@ -180,8 +196,12 @@ def analyze_file(path: Path, threshold_db: float) -> dict | None:
     if len(samples) == 0:
         return {"stem": path.stem, "error": "empty/undecodable audio"}
 
+    db = windowed_db(samples, SAMPLE_RATE)
+    win = max(1, int(SAMPLE_RATE * WINDOW_MS / 1000))
+
     lead_s, lead_floor, lead_clicks, trail_s, trail_floor, trail_clicks = \
-        measure_edge_silence(samples, SAMPLE_RATE, threshold_db)
+        measure_edge_silence(samples, db, win, SAMPLE_RATE, threshold_db)
+    file_floor = file_noise_floor(db, threshold_db)
 
     return {
         "stem": path.stem, "error": None,
@@ -189,6 +209,7 @@ def analyze_file(path: Path, threshold_db: float) -> dict | None:
         "duration": len(samples) / SAMPLE_RATE,
         "lead_s": lead_s, "lead_floor": lead_floor, "lead_clicks": lead_clicks,
         "trail_s": trail_s, "trail_floor": trail_floor, "trail_clicks": trail_clicks,
+        "file_floor": file_floor,
     }
 
 
@@ -203,11 +224,12 @@ def source_format(stem: str) -> str:
 
 
 SORT_KEYS = {
-    "lead":   lambda r: r["lead_s"],
-    "trail":  lambda r: r["trail_s"],
-    "floor":  lambda r: min(x for x in (r["lead_floor"], r["trail_floor"]) if x is not None) \
-                         if r["lead_floor"] is not None or r["trail_floor"] is not None else 999,
-    "clicks": lambda r: -(r["lead_clicks"] + r["trail_clicks"]),
+    "lead":       lambda r: r["lead_s"],
+    "trail":      lambda r: r["trail_s"],
+    "floor":      lambda r: min(x for x in (r["lead_floor"], r["trail_floor"]) if x is not None) \
+                             if r["lead_floor"] is not None or r["trail_floor"] is not None else 999,
+    "file-floor": lambda r: r["file_floor"] if r["file_floor"] is not None else 999,
+    "clicks":     lambda r: -(r["lead_clicks"] + r["trail_clicks"]),
 }
 
 
@@ -233,9 +255,9 @@ def main():
              "looser than --max-lead) -- a long tail is mostly harmless since "
              "the engine just discards it once the next audio starts; this only "
              "catches genuinely excessive outliers, not a lag concern.")
-    parser.add_argument("--sort", choices=["lead", "trail", "floor", "clicks"], default="trail",
-        help="Sort key: shortest silence (lead/trail), noisiest floor (floor), "
-             "most clicks (clicks). Default: trail")
+    parser.add_argument("--sort", choices=["lead", "trail", "floor", "file-floor", "clicks"], default="trail",
+        help="Sort key: shortest silence (lead/trail), noisiest edge floor (floor), "
+             "noisiest whole-file floor (file-floor), most clicks (clicks). Default: trail")
     parser.add_argument("--below", type=float, default=None, metavar="SECONDS",
         help="Only show files whose leading OR trailing silence is below N seconds")
     parser.add_argument("--above", type=float, default=None, metavar="SECONDS",
@@ -282,14 +304,15 @@ def main():
         return f"{v:6.1f}" if v is not None else "   n/a"
 
     print(f"\n  {'stem':<12} {'fmt':>4} {'dur':>7}  {'lead_s':>7} {'lead_dB':>8} {'l_clk':>6}  "
-          f"{'trail_s':>8} {'trail_dB':>9} {'t_clk':>6}")
-    print(f"  {'-'*12} {'-'*4} {'-'*7}  {'-'*7} {'-'*8} {'-'*6}  {'-'*8} {'-'*9} {'-'*6}")
+          f"{'trail_s':>8} {'trail_dB':>9} {'t_clk':>6}  {'floor_dB':>9}")
+    print(f"  {'-'*12} {'-'*4} {'-'*7}  {'-'*7} {'-'*8} {'-'*6}  {'-'*8} {'-'*9} {'-'*6}  {'-'*9}")
     for r in results:
         flag_l = " !" if r["lead_s"] < args.target * 0.5 else (" ^" if r["lead_s"] >= args.max_lead else "  ")
         flag_t = " !" if r["trail_s"] < args.target * 0.5 else (" ^" if r["trail_s"] >= args.max_trail else "  ")
         print(f"  {r['stem']:<12} {r['src_format']:>4} {r['duration']:>6.2f}s  "
               f"{r['lead_s']:>6.2f}s{flag_l}{fmt_floor(r['lead_floor'])}  {r['lead_clicks']:>5}  "
-              f"{r['trail_s']:>7.2f}s{flag_t}{fmt_floor(r['trail_floor'])}  {r['trail_clicks']:>5}")
+              f"{r['trail_s']:>7.2f}s{flag_t}{fmt_floor(r['trail_floor'])}  {r['trail_clicks']:>5}  "
+              f"{fmt_floor(r['file_floor']):>9}")
 
     print(f"\n  {len(results)} file(s) shown (target: {args.target:.2f}s, "
           f"leading flagged long at {args.max_lead:.2f}s, trailing at {args.max_trail:.2f}s). "
@@ -304,10 +327,11 @@ def main():
         with open(args.csv, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["stem", "src_format", "duration", "lead_s", "lead_floor_db", "lead_clicks",
-                              "trail_s", "trail_floor_db", "trail_clicks"])
+                              "trail_s", "trail_floor_db", "trail_clicks", "file_floor_db"])
             for r in results:
                 writer.writerow([r["stem"], r["src_format"], r["duration"], r["lead_s"], r["lead_floor"],
-                                  r["lead_clicks"], r["trail_s"], r["trail_floor"], r["trail_clicks"]])
+                                  r["lead_clicks"], r["trail_s"], r["trail_floor"], r["trail_clicks"],
+                                  r["file_floor"]])
         print(f"  CSV written to {args.csv}")
 
 
