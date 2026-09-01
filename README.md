@@ -292,10 +292,7 @@ All global settings, file paths, and environment configurations are managed in `
   - `mfa_lock`: points to `mfa_lock.cfg` — audio tags whose existing TextGrid `mfa` must never regenerate.
   - `float_dat`: output path for the float DAT archive (default: `./dat/vock_floats.dat`).
   - `scripts`: folder of pre-compiled `.INT` script files to pack into the DAT as `scripts\*`.
-  - `scripts_src`: folder of this project's own `.SSL` source scripts (flat, only for characters whose dialog logic was modified for this mod). Used by `tools/vock_tag.py`, which falls back to the base RP scripts in `rpu_scripts_src` (searched recursively) for everything else.
-  - `rpu_scripts_src` / `rpu_text`: paths into the sibling RPU repo (default: `../rpu/scripts_src` and `../rpu/data/text`) used by `tools/vock_tag.py` and `tools/msg_localize.py` respectively. Unlike the other `[paths]` entries, these resolve against `vock.cfg`'s own folder, not `project_root` — the RPU repo is shared infrastructure next to `vock/`, not part of whichever project `project_root` points at.
-  - `characters`: points to `characters.py` — the character table (`msg_stem, name, prefix, ssl_stems, head`) used by `tools/vock_tag.py` to look up a character's MSG file and SSL script(s) by audio tag prefix.
-  - `tag`: output folder for `tools/vock_tag.py` (default: `./tag`) — tagged MSG copies are written here; the source `msg/` files are never modified.
+  - `rpu_text`: path into the sibling RPU repo (default: `../rpu/data/text`) used by `tools/msg_localize.py`. Unlike the other `[paths]` entries, it resolves against `vock.cfg`'s own folder, not `project_root` — the RPU repo is shared infrastructure next to `vock/`, not part of whichever project `project_root` points at.
   - `loc`: output folder for localization tooling (see [Tools](#tools) below) — tagged foreign-language MSGs and rebuilt localized DATs.
 - `[settings]`:
   - `mfa_env`: The name of the conda environment where MFA is installed (default: `aligner`).
