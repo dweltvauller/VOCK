@@ -144,12 +144,13 @@ python3 vock.py --skip mfa acm
 
 ### Console verbosity
 
-By default each step prints a header and a one-line tally; warnings and errors
-are always shown and collected into a `PROBLEMS` recap after `DONE`.
+By default each step prints a header, one line per processed file, and a
+one-line tally. Warnings and errors are always shown and collected into a
+`PROBLEMS` recap after `DONE`.
 
 ```bash
-python3 vock.py --verbose   # -v: also print one line per processed file
-python3 vock.py --quiet     # -q: warnings, errors and the final summary only
+python3 vock.py --terse   # -t: section headers and per-step tallies only
+python3 vock.py --quiet   # -q: warnings, errors and the final summary only
 ```
 
 Colour is used automatically when the output is a terminal; it is disabled when

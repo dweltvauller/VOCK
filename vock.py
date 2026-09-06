@@ -64,12 +64,12 @@ USAGE
   # Change language:
   python3 vock.py --language spanish
 
-  # Quieter / louder console output:
+  # Console output (default: one line per processed file):
+  python3 vock.py --terse        # section headers and per-step tallies only
   python3 vock.py --quiet        # warnings, errors and the final summary only
-  python3 vock.py --verbose      # one line per processed file
 
   # All CLI options:
-  python3 vock.py [--language LANG] [--steps STEP [STEP ...]] [--skip STEP [STEP ...]] [-v | -q]
+  python3 vock.py [--language LANG] [--steps STEP [STEP ...]] [--skip STEP [STEP ...]] [-t | -q]
 
   All paths and settings are configured in vock.cfg.
 
@@ -857,9 +857,10 @@ _STATUS = {
 }
 
 #: Verbosity: 0 = quiet (warnings, errors and the final summary only),
-#: 1 = normal (section headers + per-step tallies too), 2 = verbose
-#: (every processed file). Set once from the CLI via set_verbosity().
-_verbosity = 1
+#: 1 = terse (section headers + per-step tallies, no per-file lines),
+#: 2 = full (every processed file) — the default. Set from the CLI
+#: via set_verbosity().
+_verbosity = 2
 
 def set_verbosity(level: int) -> None:
     global _verbosity
@@ -910,12 +911,12 @@ def _plural(n: int, one: str, many: str | None = None) -> str:
 def summarise(items, limit: int | None = None) -> str:
     """
     ``'a, b, c'`` when short; ``'a, b, c, … +N more'`` past *limit*
-    (default 8; effectively unlimited at ``-v``). Keeps config-banner
-    lists from wrapping across the screen.
+    (default 8). Keeps config-banner lists from wrapping across the
+    screen — the authoritative list lives in the .cfg file.
     """
     items = list(items)
     if limit is None:
-        limit = 10_000 if _verbosity >= 2 else 8
+        limit = 8
     if len(items) <= limit:
         return ", ".join(items)
     return ", ".join(items[:limit]) + f", … +{len(items) - limit} more"
@@ -1008,15 +1009,15 @@ def main():
         help=f"Run ONLY these step(s). Available: {', '.join(ALL_STEPS)}")
     parser.add_argument("--skip",  nargs="+", metavar="STEP", choices=ALL_STEPS,
         help="Skip these step(s) from the full pipeline.")
-    parser.add_argument("-v", "--verbose", action="store_true",
-        help="Show every processed file (per-line output for each step).")
+    parser.add_argument("-t", "--terse", action="store_true",
+        help="Section headers and per-step tallies only — no per-file lines.")
     parser.add_argument("-q", "--quiet", action="store_true",
         help="Only warnings, errors and the final summary.")
     args = parser.parse_args()
 
-    if args.verbose and args.quiet:
-        parser.error("--verbose and --quiet cannot be combined")
-    set_verbosity(2 if args.verbose else 0 if args.quiet else 1)
+    if args.terse and args.quiet:
+        parser.error("--terse and --quiet cannot be combined")
+    set_verbosity(0 if args.quiet else 1 if args.terse else 2)
     _start = time.monotonic()
 
     # ── Resolve all paths and settings from vock.cfg ──────────────────────────
