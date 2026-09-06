@@ -1139,7 +1139,8 @@ def main():
                        "no tagged audio lines — skipping")
                 continue
             all_entries.extend(found)
-            note(f"{os.path.basename(msg_path)}: {len(found)} tagged line(s)")
+            if len(msg_paths) > 1:
+                note(f"{os.path.basename(msg_path)}: {len(found)} tagged line(s)")
 
         if not all_entries:
             sys.exit("No audio-tagged lines found in any MSG file.")
@@ -1155,18 +1156,15 @@ def main():
         for line_num, tag, text in all_entries:
             by_tag.setdefault(tag, []).append((line_num, text))
 
-        reused_ok = 0
         for tag, occ in sorted(by_tag.items()):
             if len({t for _ln, t in occ}) > 1:
                 lines = ", ".join(str(ln) for ln, _t in occ)
                 status("WARN", tag,
                        f"reused on MSG lines {lines} with differing text — "
                        f"keeping line {occ[0][0]}")
-            elif len(occ) > 1:
-                reused_ok += 1
 
         os.makedirs(txtdir, exist_ok=True)
-        written = kept = unchanged = 0
+        written = kept = 0
         for tag, occ in sorted(by_tag.items()):
             text = occ[0][1]                       # first occurrence wins
             out  = os.path.join(txtdir, f"{tag}.txt")
@@ -1174,7 +1172,6 @@ def main():
                 existing = open(out, encoding=lang_enc(args.language)).read().strip()
                 if existing == text:
                     txt_map[tag] = text
-                    unchanged += 1
                 else:
                     txt_map[tag] = existing        # respect a manual edit on disk
                     kept += 1
@@ -1186,11 +1183,10 @@ def main():
             txt_map[tag] = text
             written += 1
 
-        line = (f"{len(by_tag)} unique tag(s) from {len(all_entries)} MSG line(s)"
-                f" — {written} new, {kept} kept (edited on disk), {unchanged} unchanged")
-        if reused_ok:
-            line += f"; {reused_ok} tag(s) reused with identical text"
-        note(line)
+        parts = [f"{written} new"] if written else []
+        if kept:
+            parts.append(f"{kept} kept (edited on disk)")
+        note(f"{len(by_tag)} tag(s)" + (f" — {', '.join(parts)}" if parts else " — all current"))
 
     else:
         print_section("Parse MSG → TXT", skipped=True)
@@ -1319,17 +1315,13 @@ def main():
         print_section("WAV → ACM", skipped=True)
 
     # ── STEP 4: MFA alignment ─────────────────────────────────────────────────
-    # All lines get MFA alignment and LIP files — floats included so that
+    # Every line gets MFA alignment and a LIP file — floats included, so
     # vock_floats.dat carries a LIP as a safety net in case a line was
     # mis-classified as a float.
-    head_wav_pairs  = wav_pairs
-    float_wav_pairs = [(s, w, t) for s, w, t in wav_pairs
-                       if s.lower() in float_stems]
+    head_wav_pairs = wav_pairs
 
     if "mfa" in run:
         print_section("MFA forced alignment → TextGrid", _step_no("mfa"), n_steps)
-        if float_wav_pairs:
-            note(f"{len(float_wav_pairs)} float line(s) included — TextGrid + LIP generated")
         if not head_wav_pairs:
             status("SKIP", "", "no WAV files — run 'wav' first")
         else:
@@ -1426,8 +1418,6 @@ def main():
             status("SKIP", "", "no WAV files for duration — run 'wav' first")
         else:
             os.makedirs(lipdir, exist_ok=True)
-            if float_wav_pairs:
-                note(f"{len(float_wav_pairs)} float line(s) included — LIP packed into vock_floats.dat")
             for stem, wav_path, _txt_path in head_wav_pairs:
                 lip_path = os.path.join(lipdir, stem + ".lip")
                 tg_path  = os.path.join(textgriddir, stem + ".TextGrid")
@@ -1453,9 +1443,7 @@ def main():
                     status("FAIL", stem, "missing TextGrid (MFA failed or was skipped)")
                     lip_fail += 1
 
-            note(f"{lip_ok} LIP generated, {lip_fail} failed"
-                 + (f", {len(wav_pairs) - len(head_wav_pairs)} floats skipped"
-                    if float_stems else ""))
+            note(f"{lip_ok} LIP generated, {lip_fail} failed")
     else:
         print_section("Generate LIP files", skipped=True)
 
@@ -1527,10 +1515,7 @@ def main():
         ("ACM",   str(acm_ok) if "acm" in run else "skipped"),
     ]
     if "lip" in run:
-        lip_row = f"{lip_ok} generated, {lip_fail} failed"
-        if float_wav_pairs:
-            lip_row += f" (+{len(float_wav_pairs)} float LIP in vock_floats.dat)"
-        rows.append(("LIP", lip_row))
+        rows.append(("LIP", f"{lip_ok} generated, {lip_fail} failed"))
     else:
         rows.append(("LIP", "skipped"))
     if n_unknown:
