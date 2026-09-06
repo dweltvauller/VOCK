@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 vock.py  ─  V.O.C.K.  Vocal Output Creation Kit
            Complete Fallout 2 voice modding pipeline.
 
@@ -477,7 +477,7 @@ def report_unknown_words(textgrid_dir: str) -> None:
             words      = parse_textgrid_words(tg_path)
             spn_ranges = find_spn_ranges(tg_path)
         except Exception as e:
-            print(f"  [warn] could not scan {tg_file}: {e}")
+            status("WARN", tg_file, f"could not scan: {e}")
             continue
 
         for xmin, xmax, word in words:
@@ -502,10 +502,10 @@ def report_unknown_words(textgrid_dir: str) -> None:
                     f.write(f"\n{stem}.txt\n")
                     current_stem = stem
                 f.write(f"  {word:<20}  {xmin:.2f}s – {xmax:.2f}s\n")
-            print(f"  {len(findings)} unknown word(s) found — see '{out_path}'")
+            status("WARN", "", f"{len(findings)} unknown word(s) — see {out_path}")
         else:
             f.write("No unknown words — all words recognised by MFA.\n")
-            print("  No unknown words — all words recognised by MFA.")
+            status("OK", "", "no unknown words — all recognised by MFA", record=False)
 
     return findings
 
@@ -811,18 +811,98 @@ def check_dependencies(run: set, snd2acm_hint: str, mfa_env: str) -> None:
                 "    ~/miniconda3/bin/conda init bash && exec bash")
 
     if errors:
-        print("\n[DEPENDENCY ERROR] The following required tools are missing:\n")
+        print(f"\n{_RED}{_BOLD}[DEPENDENCY ERROR]{_RESET} "
+              f"The following required tools are missing:\n")
         for e in errors:
             print(e)
         print()
         sys.exit(1)
 
-# ─── Utilities ────────────────────────────────────────────────────────────────
+# ─── Console output ───────────────────────────────────────────────────────────
+
+#: ANSI colour is used only when stdout is an interactive terminal and the
+#: caller hasn't opted out via NO_COLOR (https://no-color.org/). Piped or
+#: redirected output (CI logs, `| tee`, `> file`) stays plain ASCII.
+_USE_COLOR = (
+    sys.stdout.isatty()
+    and os.environ.get("NO_COLOR") is None
+    and os.environ.get("TERM", "") != "dumb"
+)
+
+def _c(code: str) -> str:
+    """Return an ANSI escape, or "" when colour is disabled."""
+    return code if _USE_COLOR else ""
+
+_RESET  = _c("\033[0m")
+_DIM    = _c("\033[2m")
+_BOLD   = _c("\033[1m")
+_RED    = _c("\033[31m")
+_GREEN  = _c("\033[32m")
+_YELLOW = _c("\033[33m")
+_CYAN   = _c("\033[36m")
+
+#: (colour, TTY glyph, plain-text label) per status kind.
+_STATUS = {
+    "OK":   (_GREEN,  "✓", "ok  "),
+    "WARN": (_YELLOW, "⚠", "warn"),
+    "FAIL": (_RED,    "✗", "FAIL"),
+    "SKIP": (_DIM,    "·", "skip"),
+    "INFO": (_CYAN,   "›", "info"),
+}
+
+#: WARN/FAIL lines collected during the run, reprinted by print_problem_recap().
+_problems: list[tuple[str, str, str]] = []
+_current_section = ""
+
+def status(kind: str, name: str = "", detail: str = "", *, record: bool = True) -> None:
+    """
+    Print one aligned status line:  ``<mark>  <name>   <detail>``
+
+        status("OK",   "mor1.acm", "12.3 KB")    ->     ✓  mor1.acm              12.3 KB
+        status("FAIL", "mor4",     "ffmpeg: …")   ->     ✗  mor4                  ffmpeg: …
+
+    *kind* is OK | WARN | FAIL | SKIP | INFO.  WARN and FAIL lines are also
+    stashed under the current section for the end-of-run PROBLEMS recap,
+    unless *record* is False.
+    """
+    colour, glyph, label = _STATUS.get(kind, _STATUS["INFO"])
+    mark = glyph if _USE_COLOR else label
+    if name and detail:
+        body = f"{name:<20}  {_DIM}{detail}{_RESET}"
+    else:
+        body = name or detail
+    print(f"  {colour}{mark}{_RESET}  {body}")
+    if record and kind in ("WARN", "FAIL"):
+        _problems.append((kind, _current_section,
+                          "  ".join(p for p in (name, detail) if p)))
 
 def print_section(title: str) -> None:
-    print(f"\n{'─'*60}")
-    print(f"  {title}")
-    print(f"{'─'*60}")
+    global _current_section
+    _current_section = title
+    rule = f"{_CYAN}{'─' * 60}{_RESET}"
+    print(f"\n{rule}")
+    print(f"  {_BOLD}{title}{_RESET}")
+    print(rule)
+
+def print_problem_recap() -> None:
+    """Reprint every WARN/FAIL from the run, grouped by the step that raised it."""
+    if not _problems:
+        print(f"\n  {_GREEN}No warnings or errors.{_RESET}")
+        return
+    n_fail = sum(k == "FAIL" for k, _s, _m in _problems)
+    n_warn = sum(k == "WARN" for k, _s, _m in _problems)
+    rule = f"{_YELLOW}{'─' * 60}{_RESET}"
+    print(f"\n{rule}")
+    print(f"  {_BOLD}PROBLEMS{_RESET}   {n_fail} error(s), {n_warn} warning(s)")
+    print(rule)
+    last = None
+    for kind, section, msg in _problems:
+        if section != last:
+            print(f"\n  {_DIM}{section}{_RESET}")
+            last = section
+        colour, glyph, label = _STATUS[kind]
+        mark = glyph if _USE_COLOR else label
+        print(f"    {colour}{mark}{_RESET}  {msg}")
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
@@ -964,7 +1044,8 @@ def main():
             print(f"  Reading {msg_path}")
             found = parse_msg(msg_path, encoding=lang_enc(args.language))
             if not found:
-                print(f"  [warn] No tagged audio lines in '{msg_path}' — skipping.")
+                status("WARN", os.path.basename(msg_path),
+                       "no tagged audio lines — skipping")
                 continue
             all_entries.extend(found)
             print(f"  {len(found)} line(s) found.")
@@ -986,7 +1067,7 @@ def main():
                     continue
                 # File was manually edited — keep the edit; don't overwrite
                 txt_map[tag] = existing
-                print(f"  [kept manual edit] {out}")
+                status("INFO", f"{tag}.txt", "kept manual edit", record=False)
                 continue
             with open(out, "w", encoding=lang_enc(args.language)) as fh:
                 fh.write(text)
@@ -1023,7 +1104,7 @@ def main():
                     stem = os.path.splitext(f)[0]
                     audio_files_by_stem.setdefault(stem, []).append(f)
         else:
-            print(f"  [warn] Audio folder '{audiodir}/' not found.")
+            status("WARN", "", f"audio folder '{audiodir}/' not found")
 
         # Higher-priority format wins (wav > everything else) when a stem has
         # more than one source file -- e.g. a leftover take in another format
@@ -1034,10 +1115,10 @@ def main():
             if len(files) > 1:
                 files_sorted = sorted(files, key=lambda f: (os.path.splitext(f)[1].lower() != ".wav", f))
                 chosen, ignored = files_sorted[0], files_sorted[1:]
-                print(f"  [warn] {stem}: {len(files)} audio source files found "
-                      f"({', '.join(files)}) — using {chosen}, ignoring "
-                      f"{', '.join(ignored)}. Delete the one(s) you don't want "
-                      f"so this can't silently pick the wrong take later.")
+                status("WARN", stem,
+                       f"{len(files)} source files ({', '.join(files)}) — using "
+                       f"{chosen}, ignoring {', '.join(ignored)}; delete the "
+                       f"unwanted take(s) so this can't pick wrong later")
                 audio_map[stem] = os.path.join(audiodir, chosen)
             else:
                 audio_map[stem] = os.path.join(audiodir, files[0])
@@ -1052,8 +1133,8 @@ def main():
             # Validate: must have a matching TXT
             txt_path = os.path.join(txtdir, stem + ".txt")
             if not os.path.isfile(txt_path):
-                print(f"  [skip] {stem}: no matching .txt in '{txtdir}/' "
-                      f"(run the 'msg' step first, or the tag is not in the MSG file)")
+                status("SKIP", stem,
+                       "no matching .txt (run 'msg' first, or tag not in MSG)")
                 skipped += 1
                 continue
 
@@ -1063,7 +1144,7 @@ def main():
                 # Fast path: WAV already in correct format and norm disabled
                 if no_norm and ext == ".wav" and wav_is_standard(src_path):
                     shutil.copy2(src_path, out_wav)
-                    print(f"  copied   {out_wav}  (already 22050 Hz mono 16-bit)")
+                    status("OK", f"{stem}.wav", "copied — already 22050 Hz mono 16-bit")
                 else:
                     cmd = ["ffmpeg", "-y", "-i", src_path]
                     if not no_norm:
@@ -1072,13 +1153,13 @@ def main():
                     r = subprocess.run(cmd, capture_output=True, text=True)
                     if r.returncode != 0:
                         raise RuntimeError(r.stderr.strip())
-                    action = "enc+norm" if not no_norm else "encoded"
-                    print(f"  {action.ljust(8)} {out_wav}")
+                    action = "encoded + normalised" if not no_norm else "encoded"
+                    status("OK", f"{stem}.wav", action)
 
                 wav_pairs.append((stem, out_wav, txt_path))
                 enc_ok += 1
             except RuntimeError as e:
-                print(f"  [error] {stem}: ffmpeg failed: {e}")
+                status("FAIL", stem, f"ffmpeg: {e}")
 
         print(f"\n  {enc_ok} file(s) ready in '{wavdir}/'  "
               f"({skipped} skipped — no matching TXT)")
@@ -1099,12 +1180,13 @@ def main():
     if "acm" in run:
         print_section("STEP 3 — Convert wav/ → acm/")
         if not wav_pairs:
-            print("  No standardised WAV files found — run the 'wav' step first.")
+            status("SKIP", "", "no standardised WAV files — run 'wav' first")
         else:
             snd2acm_bin = find_snd2acm(snd2acm_cfg)
             if not snd2acm_bin:
-                print("  snd2acm.exe not found — skipping ACM generation.")
-                print("  Place snd2acm.exe next to vock.py and re-run.")
+                status("WARN", "", "snd2acm.exe not found — ACM generation skipped")
+                status("INFO", "", "place snd2acm.exe next to vock.py and re-run",
+                       record=False)
             else:
                 os.makedirs(acmdir, exist_ok=True)
                 for stem, wav_path, _txt in wav_pairs:
@@ -1112,10 +1194,10 @@ def main():
                     try:
                         wav_to_acm(snd2acm_bin, wav_path, acm_path)
                         size_kb = os.path.getsize(acm_path) / 1024
-                        print(f"  wrote  {acm_path}  ({size_kb:.1f} KB)")
+                        status("OK", f"{stem}.acm", f"{size_kb:.1f} KB")
                         acm_ok += 1
                     except RuntimeError as e:
-                        print(f"  [error] {stem}: {e}")
+                        status("FAIL", stem, str(e))
                 print(f"\n  {acm_ok}/{len(wav_pairs)} ACM file(s) written.")
     else:
         print_section("STEP 3 — Convert wav/ → acm/  [skipped]")
@@ -1133,7 +1215,7 @@ def main():
         if float_wav_pairs:
             print(f"  ({len(float_wav_pairs)} float line(s) included — TextGrid + LIP will be generated)")
         if not head_wav_pairs:
-            print("  No WAV files available — run the 'wav' step first.")
+            status("SKIP", "", "no WAV files — run 'wav' first")
         else:
             import tempfile
             os.makedirs(textgriddir, exist_ok=True)
@@ -1150,9 +1232,10 @@ def main():
                     dict_arg = merged
                     print(f"  Using custom dictionary: {custom_dict_path}")
                 else:
-                    print(f"  [warn] Custom dictionary found ({custom_dict_path}) but the "
-                          f"main MFA dictionary for '{mfa_name}' could not be located "
-                          f"— passing '{mfa_name}' to MFA directly.")
+                    status("WARN", "",
+                           f"custom dictionary found ({custom_dict_path}) but the main "
+                           f"MFA dictionary for '{mfa_name}' could not be located — "
+                           f"passing '{mfa_name}' to MFA directly")
 
             # Locked stems keep their existing TextGrid untouched — excluded from
             # the MFA corpus entirely so they can't skew the pooled per-speaker
@@ -1163,10 +1246,11 @@ def main():
                 if stem in mfa_lock:
                     tg_path = os.path.join(textgriddir, item[0] + ".TextGrid")
                     if os.path.isfile(tg_path):
-                        print(f"  [locked] {item[0]} — keeping existing TextGrid, skipped from MFA")
+                        status("SKIP", item[0], "locked — existing TextGrid kept")
                     else:
-                        print(f"  [warn] {item[0]} is in mfa_lock but has no TextGrid on disk — "
-                              f"'lip' will fail for it until you unlock or supply one")
+                        status("WARN", item[0],
+                               "in mfa_lock but no TextGrid on disk — 'lip' will fail "
+                               "for it until you unlock or supply one")
                 else:
                     alignable_pairs.append(item)
 
@@ -1205,8 +1289,8 @@ def main():
                         print(f"    {group_tg}/{len(pairs)} TextGrid(s) exported")
                     else:
                         failed_groups.append(prefix)
-                        print(f"    [warn] MFA failed for [{prefix}] — "
-                              "text approximation will be used for these files.")
+                        status("WARN", f"[{prefix}]",
+                               "MFA failed — text approximation will be used for these files")
 
             if _merge_tmp:
                 _merge_tmp.cleanup()
@@ -1222,7 +1306,7 @@ def main():
     if "lip" in run:
         print_section("STEP 5 — Generate LIP files")
         if not head_wav_pairs:
-            print("  No WAV files available for duration — run the 'wav' step first.")
+            status("SKIP", "", "no WAV files for duration — run 'wav' first")
         else:
             os.makedirs(lipdir, exist_ok=True)
             if float_wav_pairs:
@@ -1234,7 +1318,7 @@ def main():
                 try:
                     duration = ffprobe_duration(wav_path)
                 except Exception as e:
-                    print(f"  [error] {stem}: could not read duration: {e}")
+                    status("FAIL", stem, f"could not read duration: {e}")
                     lip_fail += 1
                     continue
 
@@ -1242,14 +1326,14 @@ def main():
                     try:
                         events = build_events_from_textgrid(tg_path, phoneme_to_code)
                         write_lip(lip_path, stem, duration, events)
-                        print(f"  wrote  {lip_path}  "
-                              f"({duration:.3f}s, {len(events)} events, MFA)")
+                        status("OK", f"{stem}.lip",
+                               f"{duration:.3f}s, {len(events)} events, MFA")
                         lip_ok += 1
                     except Exception as e:
-                        print(f"  [error] {stem}: TextGrid error ({e})")
+                        status("FAIL", stem, f"TextGrid error ({e})")
                         lip_fail += 1
                 else:
-                    print(f"  [error] {stem}: Missing TextGrid (MFA failed or was skipped)")
+                    status("FAIL", stem, "missing TextGrid (MFA failed or was skipped)")
                     lip_fail += 1
 
             print(f"\n  {lip_ok} MFA successfully mapped  +  {lip_fail} failed"
@@ -1278,14 +1362,14 @@ def main():
                 art_dir      = artdir,
             )
             if not dat_entries:
-                print("  No files to pack — skipping.")
+                status("SKIP", os.path.basename(datfile), "no files to pack")
             else:
                 write_dat2(datfile, dat_entries)
                 total_kb = os.path.getsize(datfile) / 1024
-                print(f"  wrote  {datfile}  "
-                      f"({len(dat_entries)} file(s), {total_kb:.1f} KB)")
+                status("OK", os.path.basename(datfile),
+                       f"{len(dat_entries)} file(s), {total_kb:.1f} KB  →  {datfile}")
         except Exception as e:
-            print(f"  [error] DAT creation failed: {e}")
+            status("FAIL", os.path.basename(datfile), f"DAT creation failed: {e}")
 
         # ── 6b: Float DAT (only when float lines exist) ───────────────────────
         if float_stems:
@@ -1305,21 +1389,24 @@ def main():
                     art_dir       = None,      # art assets go in vock.dat only
                 )
                 if not float_entries:
-                    print("  No float ACM files found — run the 'acm' step first.")
+                    status("SKIP", os.path.basename(float_datfile),
+                           "no float ACM files — run 'acm' first")
                 else:
                     write_dat2(float_datfile, float_entries)
                     total_kb = os.path.getsize(float_datfile) / 1024
-                    print(f"  wrote  {float_datfile}  "
-                          f"({len(float_entries)} file(s), {total_kb:.1f} KB)")
+                    status("OK", os.path.basename(float_datfile),
+                           f"{len(float_entries)} file(s), {total_kb:.1f} KB  →  {float_datfile}")
             except Exception as e:
-                print(f"  [error] Float DAT creation failed: {e}")
+                status("FAIL", os.path.basename(float_datfile),
+                       f"DAT creation failed: {e}")
     else:
         print_section("STEP 6 — Build DAT  [skipped]")
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    print(f"\n{'═'*60}")
-    print("  DONE")
-    print(f"{'═'*60}")
+    done_rule = f"{_BOLD}{_GREEN}{'═' * 60}{_RESET}"
+    print(f"\n{done_rule}")
+    print(f"  {_BOLD}DONE{_RESET}")
+    print(done_rule)
     steps_run = [s for s in ALL_STEPS if s in run]
     print(f"  Steps run  : {', '.join(steps_run) or '(none)'}")
     print(f"  TXT files  : {len(txt_map)} known")
@@ -1336,6 +1423,8 @@ def main():
             print(f"  Float DAT  : {float_datfile}")
     else:
         print(f"  DAT file   : skipped")
+
+    print_problem_recap()
     print()
 
 
