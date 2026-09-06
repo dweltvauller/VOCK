@@ -142,6 +142,19 @@ python3 vock.py --skip acm
 python3 vock.py --skip mfa acm
 ```
 
+### Console verbosity
+
+By default each step prints a header and a one-line tally; warnings and errors
+are always shown and collected into a `PROBLEMS` recap after `DONE`.
+
+```bash
+python3 vock.py --verbose   # -v: also print one line per processed file
+python3 vock.py --quiet     # -q: warnings, errors and the final summary only
+```
+
+Colour is used automatically when the output is a terminal; it is disabled when
+output is piped/redirected or when `NO_COLOR` is set.
+
 ## Manual text-correction workflow (human-in-the-loop)
 
 Fallout 2 dialogue sometimes contains placeholders, numbers, jokes, or names that MFA

@@ -64,8 +64,12 @@ USAGE
   # Change language:
   python3 vock.py --language spanish
 
+  # Quieter / louder console output:
+  python3 vock.py --quiet        # warnings, errors and the final summary only
+  python3 vock.py --verbose      # one line per processed file
+
   # All CLI options:
-  python3 vock.py [--language LANG] [--steps STEP [STEP ...]] [--skip STEP [STEP ...]]
+  python3 vock.py [--language LANG] [--steps STEP [STEP ...]] [--skip STEP [STEP ...]] [-v | -q]
 
   All paths and settings are configured in vock.cfg.
 
@@ -98,6 +102,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 
 _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vock.cfg")
 _parser = configparser.ConfigParser(inline_comment_prefixes=("#",))
@@ -459,11 +464,12 @@ def find_spn_ranges(tg_path: str) -> list:
             for xmin, xmax, label in parse_textgrid_phones(tg_path)
             if label.strip().lower() == "spn"]
 
-def report_unknown_words(textgrid_dir: str) -> None:
+def report_unknown_words(textgrid_dir: str) -> list:
     """
     Scan all TextGrids in textgrid_dir.
     For each word whose time range contains a 'spn' phone interval,
-    write a report to unknown_words.txt in the same folder.
+    write a report to unknown.txt. Returns the list of (stem, word, xmin, xmax)
+    findings (empty when everything was recognised).
     """
     findings = []
     tg_files = sorted(f for f in os.listdir(textgrid_dir) if f.endswith(".TextGrid"))
@@ -538,7 +544,7 @@ def run_mfa(corpus_dir: str, output_dir: str, mfa_env: str,
         output_dir,
     ]
     n = len([f for f in os.listdir(corpus_dir) if f.endswith(".wav")])
-    print(f"\n  Running MFA on {n} file(s)…  (this may take a minute)\n")
+    note(f"running MFA on {n} file(s)…  (this may take a minute)")
     r = subprocess.run(cmd, text=True)
     return r.returncode == 0
 
@@ -850,21 +856,41 @@ _STATUS = {
     "INFO": (_CYAN,   "›", "info"),
 }
 
+#: Verbosity: 0 = quiet (warnings, errors and the final summary only),
+#: 1 = normal (section headers + per-step tallies too), 2 = verbose
+#: (every processed file). Set once from the CLI via set_verbosity().
+_verbosity = 1
+
+def set_verbosity(level: int) -> None:
+    global _verbosity
+    _verbosity = level
+
 #: WARN/FAIL lines collected during the run, reprinted by print_problem_recap().
 _problems: list[tuple[str, str, str]] = []
 _current_section = ""
 
-def status(kind: str, name: str = "", detail: str = "", *, record: bool = True) -> None:
+def status(kind: str, name: str = "", detail: str = "",
+           *, record: bool = True, bulk: bool = False) -> None:
     """
     Print one aligned status line:  ``<mark>  <name>   <detail>``
 
         status("OK",   "mor1.acm", "12.3 KB")    ->     ✓  mor1.acm              12.3 KB
         status("FAIL", "mor4",     "ffmpeg: …")   ->     ✗  mor4                  ffmpeg: …
 
-    *kind* is OK | WARN | FAIL | SKIP | INFO.  WARN and FAIL lines are also
-    stashed under the current section for the end-of-run PROBLEMS recap,
-    unless *record* is False.
+    *kind* is OK | WARN | FAIL | SKIP | INFO.  WARN and FAIL lines are always
+    shown and are stashed under the current section for the end-of-run PROBLEMS
+    recap (unless *record* is False).
+
+    *bulk* marks a routine one-per-file line: shown only at ``-v``.  Other
+    OK/INFO/SKIP lines show at normal verbosity and are hidden by ``-q``.
     """
+    if record and kind in ("WARN", "FAIL"):
+        _problems.append((kind, _current_section,
+                          "  ".join(p for p in (name, detail) if p)))
+    is_problem = kind in ("WARN", "FAIL")
+    show = is_problem or _verbosity >= 2 or (_verbosity >= 1 and not bulk)
+    if not show:
+        return
     colour, glyph, label = _STATUS.get(kind, _STATUS["INFO"])
     mark = glyph if _USE_COLOR else label
     if name and detail:
@@ -872,17 +898,65 @@ def status(kind: str, name: str = "", detail: str = "", *, record: bool = True) 
     else:
         body = name or detail
     print(f"  {colour}{mark}{_RESET}  {body}")
-    if record and kind in ("WARN", "FAIL"):
-        _problems.append((kind, _current_section,
-                          "  ".join(p for p in (name, detail) if p)))
 
-def print_section(title: str) -> None:
+def note(text: str = "", *, indent: int = 2) -> None:
+    """A plain progress / per-step tally line — shown at normal verbosity and up."""
+    if _verbosity >= 1:
+        print(f"{' ' * indent}{text}" if text else "")
+
+def _plural(n: int, one: str, many: str | None = None) -> str:
+    return one if n == 1 else (many or one + "s")
+
+def summarise(items, limit: int | None = None) -> str:
+    """
+    ``'a, b, c'`` when short; ``'a, b, c, … +N more'`` past *limit*
+    (default 8; effectively unlimited at ``-v``). Keeps config-banner
+    lists from wrapping across the screen.
+    """
+    items = list(items)
+    if limit is None:
+        limit = 10_000 if _verbosity >= 2 else 8
+    if len(items) <= limit:
+        return ", ".join(items)
+    return ", ".join(items[:limit]) + f", … +{len(items) - limit} more"
+
+def _fmt_dur(sec: float) -> str:
+    if sec < 60:
+        return f"{sec:.1f}s"
+    m, s = divmod(int(round(sec)), 60)
+    if m < 60:
+        return f"{m}m {s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h {m:02d}m {s:02d}s"
+
+def _fmt_size(kb: float) -> str:
+    return f"{kb / 1024:.1f} MB" if kb >= 1024 else f"{kb:.1f} KB"
+
+def print_section(title: str, step: int | None = None, total: int | None = None,
+                  *, skipped: bool = False) -> None:
+    """Slim, numbered step banner. Suppressed entirely by ``-q``."""
     global _current_section
     _current_section = title
-    rule = f"{_CYAN}{'─' * 60}{_RESET}"
-    print(f"\n{rule}")
-    print(f"  {_BOLD}{title}{_RESET}")
-    print(rule)
+    if _verbosity < 1:
+        return
+    tag = f"STEP {step}/{total} · " if step else ""
+    if skipped:
+        print(f"\n{_DIM}── {tag}{title} — skipped{_RESET}")
+        return
+    label = f"━━ {tag}{title} "
+    print(f"\n{_BOLD}{_CYAN}{label}{'━' * max(4, 64 - len(label))}{_RESET}")
+
+def print_summary(title: str, rows: list[tuple[str, str]],
+                  *, duration: float | None = None) -> None:
+    """The DONE banner: a bold rule and a left-aligned label/value table."""
+    bar  = f"{_BOLD}{_GREEN}{'═' * 60}{_RESET}"
+    head = f"{_BOLD}{title}{_RESET}"
+    if duration is not None:
+        head += f"   {_DIM}{_fmt_dur(duration)}{_RESET}"
+    print(f"\n{bar}\n  {head}\n{bar}")
+    w = max((len(k) for k, _v in rows), default=0)
+    for k, v in rows:
+        print(f"  {k:<{w}}  {v}")
 
 def print_problem_recap() -> None:
     """Reprint every WARN/FAIL from the run, grouped by the step that raised it."""
@@ -934,7 +1008,16 @@ def main():
         help=f"Run ONLY these step(s). Available: {', '.join(ALL_STEPS)}")
     parser.add_argument("--skip",  nargs="+", metavar="STEP", choices=ALL_STEPS,
         help="Skip these step(s) from the full pipeline.")
+    parser.add_argument("-v", "--verbose", action="store_true",
+        help="Show every processed file (per-line output for each step).")
+    parser.add_argument("-q", "--quiet", action="store_true",
+        help="Only warnings, errors and the final summary.")
     args = parser.parse_args()
+
+    if args.verbose and args.quiet:
+        parser.error("--verbose and --quiet cannot be combined")
+    set_verbosity(2 if args.verbose else 0 if args.quiet else 1)
+    _start = time.monotonic()
 
     # ── Resolve all paths and settings from vock.cfg ──────────────────────────
     # Every paths entry is resolved against config["project_root"] (default "./"),
@@ -977,24 +1060,27 @@ def main():
     custom_dict_print = custom_dict_path if custom_dict_path and os.path.isfile(custom_dict_path) else "None"
     main_dict_print   = main_dict_path if main_dict_path else f"{mfa_name} (MFA built-in/downloaded)"
 
-    print_section("Configuration")
-    print(f"  Language       : {args.language}")
-    print(f"  Acoustic Model : {mfa_name}")
-    print(f"  Dictionary     : {main_dict_print}")
-    print(f"  Custom Dict    : {custom_dict_print}")
-    print(f"  Phoneme Map    : phonemes_{mfa_name}.py")
-    if npc_prefixes:
-        print(f"  NPC filter     : {', '.join(sorted(npc_prefixes))}")
-    else:
-        print(f"  NPC filter     : all")
-    if float_map:
-        float_summary = ", ".join(
-            f"{p}({','.join(f'{lo}-{hi}' for lo, hi in ranges)})"
-            for p, ranges in sorted(float_map.items())
-        )
-        print(f"  Floats         : {float_summary}")
-    if mfa_lock:
-        print(f"  MFA lock       : {', '.join(sorted(mfa_lock))}  (existing TextGrid kept as-is)")
+    if _verbosity >= 1:
+        print_section("Configuration")
+        for label, value in (
+            ("Language",       args.language),
+            ("Acoustic Model", mfa_name),
+            ("Dictionary",     main_dict_print),
+            ("Custom Dict",    custom_dict_print),
+            ("Phoneme Map",    f"phonemes_{mfa_name}.py"),
+            ("NPC filter",     summarise(sorted(npc_prefixes)) if npc_prefixes else "all"),
+        ):
+            print(f"  {label:<15}: {value}")
+        # Floats / MFA lock: show the count, then a truncated sample (full list
+        # under -v) so a big float_filter.cfg / mfa_lock.cfg doesn't flood the
+        # banner. The authoritative lists live in those files.
+        if float_map:
+            print(f"  {'Floats':<15}: {len(float_map)} "
+                  f"{_plural(len(float_map), 'prefix', 'prefixes')} — "
+                  f"{summarise(sorted(float_map))}")
+        if mfa_lock:
+            print(f"  {'MFA lock':<15}: {len(mfa_lock)} "
+                  f"{_plural(len(mfa_lock), 'tag')} — {summarise(sorted(mfa_lock))}")
 
     # Resolve which steps to run
     if args.steps:
@@ -1004,6 +1090,11 @@ def main():
         if args.skip:
             for s in args.skip:
                 run.discard(s)
+
+    ordered_steps = [s for s in ALL_STEPS if s in run]
+    n_steps = len(ordered_steps)
+    def _step_no(key: str) -> int | None:
+        return ordered_steps.index(key) + 1 if key in ordered_steps else None
 
     # Fast-fail dependency check
     check_dependencies(run, snd2acm_cfg, mfa_env)
@@ -1032,53 +1123,77 @@ def main():
     acm_ok     = 0
     lip_ok     = 0
     lip_fail   = 0
+    n_unknown  = 0      # MFA 'spn' occurrences → unknown.txt (set by the mfa step)
 
     # ── STEP 1: MSG → TXT ────────────────────────────────────────────────────
     if "msg" in run:
-        print_section("STEP 1 — Parse MSG → TXT")
+        print_section("Parse MSG → TXT", _step_no("msg"), n_steps)
 
         msg_paths = _scan_msg_dir(msgdir)
 
         all_entries = []
         for msg_path in msg_paths:
-            print(f"  Reading {msg_path}")
             found = parse_msg(msg_path, encoding=lang_enc(args.language))
             if not found:
                 status("WARN", os.path.basename(msg_path),
                        "no tagged audio lines — skipping")
                 continue
             all_entries.extend(found)
-            print(f"  {len(found)} line(s) found.")
+            note(f"{os.path.basename(msg_path)}: {len(found)} tagged line(s)")
 
         if not all_entries:
             sys.exit("No audio-tagged lines found in any MSG file.")
 
         all_entries = filter_by_prefix(all_entries, npc_prefixes, key=lambda x: x[1])
 
+        # Collapse repeated audio tags. The same tag legitimately recurs across
+        # MSG lines (one spoken line reused by several dialogue nodes). Group by
+        # tag; when the grouped lines disagree on text it's a real ambiguity —
+        # the recording only matches one — so warn once, naming the lines, and
+        # keep the first occurrence.
+        by_tag: dict[str, list[tuple[int, str]]] = {}
+        for line_num, tag, text in all_entries:
+            by_tag.setdefault(tag, []).append((line_num, text))
+
+        reused_ok = 0
+        for tag, occ in sorted(by_tag.items()):
+            if len({t for _ln, t in occ}) > 1:
+                lines = ", ".join(str(ln) for ln, _t in occ)
+                status("WARN", tag,
+                       f"reused on MSG lines {lines} with differing text — "
+                       f"keeping line {occ[0][0]}")
+            elif len(occ) > 1:
+                reused_ok += 1
+
         os.makedirs(txtdir, exist_ok=True)
-        written = 0
-        for _line_num, tag, text in all_entries:
-            out = os.path.join(txtdir, f"{tag}.txt")
-            # Only overwrite if content differs (preserve manual edits)
+        written = kept = unchanged = 0
+        for tag, occ in sorted(by_tag.items()):
+            text = occ[0][1]                       # first occurrence wins
+            out  = os.path.join(txtdir, f"{tag}.txt")
             if os.path.isfile(out):
                 existing = open(out, encoding=lang_enc(args.language)).read().strip()
                 if existing == text:
                     txt_map[tag] = text
-                    continue
-                # File was manually edited — keep the edit; don't overwrite
-                txt_map[tag] = existing
-                status("INFO", f"{tag}.txt", "kept manual edit", record=False)
+                    unchanged += 1
+                else:
+                    txt_map[tag] = existing        # respect a manual edit on disk
+                    kept += 1
+                    status("INFO", f"{tag}.txt", "kept manual edit on disk",
+                           record=False, bulk=True)
                 continue
             with open(out, "w", encoding=lang_enc(args.language)) as fh:
                 fh.write(text)
             txt_map[tag] = text
             written += 1
 
-        print(f"  {written} new TXT file(s) written to '{txtdir}/'")
-        print(f"  (Total {len(all_entries)} lines; existing files preserved if manually edited)")
+        line = (f"{len(by_tag)} unique tag(s) from {len(all_entries)} MSG line(s)"
+                f" — {written} new, {kept} kept (edited on disk), {unchanged} unchanged")
+        if reused_ok:
+            line += f"; {reused_ok} tag(s) reused with identical text"
+        note(line)
 
     else:
-        print_section("STEP 1 — Parse MSG → TXT  [skipped]")
+        print_section("Parse MSG → TXT", skipped=True)
         # Resolve msg_paths for the DAT step (best-effort; missing dir is not fatal here)
         if os.path.isdir(msgdir):
             msg_paths = _scan_msg_dir(msgdir)
@@ -1092,7 +1207,7 @@ def main():
 
     # ── STEP 2: audio/ → wav/ (Universal Audio step) ─────────────────────────
     if "wav" in run:
-        print_section("STEP 2 — Convert audio/ → wav/  (22050 Hz mono 16-bit)")
+        print_section("Audio → WAV  (22050 Hz mono 16-bit)", _step_no("wav"), n_steps)
         os.makedirs(wavdir, exist_ok=True)
 
         # Scan audio/ for all supported formats
@@ -1134,7 +1249,8 @@ def main():
             txt_path = os.path.join(txtdir, stem + ".txt")
             if not os.path.isfile(txt_path):
                 status("SKIP", stem,
-                       "no matching .txt (run 'msg' first, or tag not in MSG)")
+                       "no matching .txt (run 'msg' first, or tag not in MSG)",
+                       bulk=True)
                 skipped += 1
                 continue
 
@@ -1144,7 +1260,8 @@ def main():
                 # Fast path: WAV already in correct format and norm disabled
                 if no_norm and ext == ".wav" and wav_is_standard(src_path):
                     shutil.copy2(src_path, out_wav)
-                    status("OK", f"{stem}.wav", "copied — already 22050 Hz mono 16-bit")
+                    status("OK", f"{stem}.wav", "copied — already 22050 Hz mono 16-bit",
+                           bulk=True)
                 else:
                     cmd = ["ffmpeg", "-y", "-i", src_path]
                     if not no_norm:
@@ -1154,18 +1271,17 @@ def main():
                     if r.returncode != 0:
                         raise RuntimeError(r.stderr.strip())
                     action = "encoded + normalised" if not no_norm else "encoded"
-                    status("OK", f"{stem}.wav", action)
+                    status("OK", f"{stem}.wav", action, bulk=True)
 
                 wav_pairs.append((stem, out_wav, txt_path))
                 enc_ok += 1
             except RuntimeError as e:
                 status("FAIL", stem, f"ffmpeg: {e}")
 
-        print(f"\n  {enc_ok} file(s) ready in '{wavdir}/'  "
-              f"({skipped} skipped — no matching TXT)")
+        note(f"{enc_ok} WAV ready, {skipped} skipped (no matching .txt)")
 
     else:
-        print_section("STEP 2 — Convert audio/ → wav/  [skipped]")
+        print_section("Audio → WAV", skipped=True)
         # Populate wav_pairs from existing standardised WAVs
         if os.path.isdir(wavdir):
             for f in sorted(os.listdir(wavdir)):
@@ -1178,7 +1294,7 @@ def main():
 
     # ── STEP 3: wav/ → ACM ───────────────────────────────────────────────────
     if "acm" in run:
-        print_section("STEP 3 — Convert wav/ → acm/")
+        print_section("WAV → ACM", _step_no("acm"), n_steps)
         if not wav_pairs:
             status("SKIP", "", "no standardised WAV files — run 'wav' first")
         else:
@@ -1194,13 +1310,13 @@ def main():
                     try:
                         wav_to_acm(snd2acm_bin, wav_path, acm_path)
                         size_kb = os.path.getsize(acm_path) / 1024
-                        status("OK", f"{stem}.acm", f"{size_kb:.1f} KB")
+                        status("OK", f"{stem}.acm", f"{size_kb:.1f} KB", bulk=True)
                         acm_ok += 1
                     except RuntimeError as e:
                         status("FAIL", stem, str(e))
-                print(f"\n  {acm_ok}/{len(wav_pairs)} ACM file(s) written.")
+                note(f"{acm_ok}/{len(wav_pairs)} ACM written")
     else:
-        print_section("STEP 3 — Convert wav/ → acm/  [skipped]")
+        print_section("WAV → ACM", skipped=True)
 
     # ── STEP 4: MFA alignment ─────────────────────────────────────────────────
     # All lines get MFA alignment and LIP files — floats included so that
@@ -1211,9 +1327,9 @@ def main():
                        if s.lower() in float_stems]
 
     if "mfa" in run:
-        print_section("STEP 4 — MFA forced alignment → TextGrid")
+        print_section("MFA forced alignment → TextGrid", _step_no("mfa"), n_steps)
         if float_wav_pairs:
-            print(f"  ({len(float_wav_pairs)} float line(s) included — TextGrid + LIP will be generated)")
+            note(f"{len(float_wav_pairs)} float line(s) included — TextGrid + LIP generated")
         if not head_wav_pairs:
             status("SKIP", "", "no WAV files — run 'wav' first")
         else:
@@ -1230,7 +1346,7 @@ def main():
                     merged = os.path.join(_merge_tmp.name, "merged.dict")
                     merge_dictionaries(main_dict_path, custom_dict_path, merged)
                     dict_arg = merged
-                    print(f"  Using custom dictionary: {custom_dict_path}")
+                    note(f"using custom dictionary: {os.path.basename(custom_dict_path)}")
                 else:
                     status("WARN", "",
                            f"custom dictionary found ({custom_dict_path}) but the main "
@@ -1246,7 +1362,7 @@ def main():
                 if stem in mfa_lock:
                     tg_path = os.path.join(textgriddir, item[0] + ".TextGrid")
                     if os.path.isfile(tg_path):
-                        status("SKIP", item[0], "locked — existing TextGrid kept")
+                        status("SKIP", item[0], "locked — existing TextGrid kept", bulk=True)
                     else:
                         status("WARN", item[0],
                                "in mfa_lock but no TextGrid on disk — 'lip' will fail "
@@ -1264,7 +1380,7 @@ def main():
             failed_groups: list[str] = []
 
             for prefix, pairs in sorted(groups.items()):
-                print(f"\n  [{prefix}]  {len(pairs)} file(s) …")
+                note(f"[{prefix}] aligning {len(pairs)} file(s)…")
                 with tempfile.TemporaryDirectory(prefix=f"vock_{prefix}_") as corpus_dir:
                     for stem, wav_path, txt_path in pairs:
                         shutil.copy2(wav_path, os.path.join(corpus_dir, stem + ".wav"))
@@ -1286,7 +1402,8 @@ def main():
                                     os.path.join(textgriddir, f))
                                 total_tg += 1
                                 group_tg += 1
-                        print(f"    {group_tg}/{len(pairs)} TextGrid(s) exported")
+                        note(f"[{prefix}] {group_tg}/{len(pairs)} TextGrid(s) exported",
+                             indent=4)
                     else:
                         failed_groups.append(prefix)
                         status("WARN", f"[{prefix}]",
@@ -1295,22 +1412,22 @@ def main():
             if _merge_tmp:
                 _merge_tmp.cleanup()
 
-            print(f"\n  {total_tg} TextGrid(s) saved to '{textgriddir}/'")
+            note(f"{total_tg} TextGrid(s) saved")
             if failed_groups:
-                print(f"  Failed groups: {', '.join(failed_groups)}")
-            report_unknown_words(textgriddir)
+                note(f"MFA failed for group(s): {', '.join(failed_groups)}")
+            n_unknown = len(report_unknown_words(textgriddir))
     else:
-        print_section("STEP 4 — MFA forced alignment  [skipped]")
+        print_section("MFA forced alignment", skipped=True)
 
     # ── STEP 5: LIP generation ────────────────────────────────────────────────
     if "lip" in run:
-        print_section("STEP 5 — Generate LIP files")
+        print_section("Generate LIP files", _step_no("lip"), n_steps)
         if not head_wav_pairs:
             status("SKIP", "", "no WAV files for duration — run 'wav' first")
         else:
             os.makedirs(lipdir, exist_ok=True)
             if float_wav_pairs:
-                print(f"  ({len(float_wav_pairs)} float line(s) included — LIP files packed into vock_floats.dat)")
+                note(f"{len(float_wav_pairs)} float line(s) included — LIP packed into vock_floats.dat")
             for stem, wav_path, _txt_path in head_wav_pairs:
                 lip_path = os.path.join(lipdir, stem + ".lip")
                 tg_path  = os.path.join(textgriddir, stem + ".TextGrid")
@@ -1327,7 +1444,7 @@ def main():
                         events = build_events_from_textgrid(tg_path, phoneme_to_code)
                         write_lip(lip_path, stem, duration, events)
                         status("OK", f"{stem}.lip",
-                               f"{duration:.3f}s, {len(events)} events, MFA")
+                               f"{duration:.3f}s, {len(events)} events, MFA", bulk=True)
                         lip_ok += 1
                     except Exception as e:
                         status("FAIL", stem, f"TextGrid error ({e})")
@@ -1336,11 +1453,11 @@ def main():
                     status("FAIL", stem, "missing TextGrid (MFA failed or was skipped)")
                     lip_fail += 1
 
-            print(f"\n  {lip_ok} MFA successfully mapped  +  {lip_fail} failed"
-                  + (f"  ({len(wav_pairs) - len(head_wav_pairs)} floats skipped)"
-                     if float_stems else ""))
+            note(f"{lip_ok} LIP generated, {lip_fail} failed"
+                 + (f", {len(wav_pairs) - len(head_wav_pairs)} floats skipped"
+                    if float_stems else ""))
     else:
-        print_section("STEP 5 — Generate LIP files  [skipped]")
+        print_section("Generate LIP files", skipped=True)
 
     # ── STEP 6: Build DAT ────────────────────────────────────────────────────
     if "dat" in run:
@@ -1348,7 +1465,7 @@ def main():
         os.makedirs(os.path.dirname(datfile) or ".", exist_ok=True)
 
         # ── 6a: Talking-head DAT ──────────────────────────────────────────────
-        print_section("STEP 6a — Build vock.dat  (talking heads)")
+        print_section("Build vock.dat  (talking heads)", _step_no("dat"), n_steps)
         try:
             dat_entries = collect_dat_entries(
                 msg_paths    = msg_paths,
@@ -1373,7 +1490,7 @@ def main():
 
         # ── 6b: Float DAT (only when float lines exist) ───────────────────────
         if float_stems:
-            print_section("STEP 6b — Build vock_floats.dat  (floats)")
+            print_section("Build vock_floats.dat  (floats)")
             os.makedirs(os.path.dirname(float_datfile) or ".", exist_ok=True)
             try:
                 float_entries = collect_dat_entries(
@@ -1400,30 +1517,35 @@ def main():
                 status("FAIL", os.path.basename(float_datfile),
                        f"DAT creation failed: {e}")
     else:
-        print_section("STEP 6 — Build DAT  [skipped]")
+        print_section("Build DAT", skipped=True)
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    done_rule = f"{_BOLD}{_GREEN}{'═' * 60}{_RESET}"
-    print(f"\n{done_rule}")
-    print(f"  {_BOLD}DONE{_RESET}")
-    print(done_rule)
-    steps_run = [s for s in ALL_STEPS if s in run]
-    print(f"  Steps run  : {', '.join(steps_run) or '(none)'}")
-    print(f"  TXT files  : {len(txt_map)} known")
-    print(f"  WAV files  : {len(wav_pairs)}")
-    print(f"  ACM files  : {acm_ok if 'acm' in run else 'skipped'}")
+    rows: list[tuple[str, str]] = [
+        ("Steps", ", ".join(ordered_steps) or "(none)"),
+        ("TXT",   f"{len(txt_map)} known"),
+        ("WAV",   str(len(wav_pairs))),
+        ("ACM",   str(acm_ok) if "acm" in run else "skipped"),
+    ]
     if "lip" in run:
-        float_note = f"  ({len(float_wav_pairs)} float LIP(s) included in vock_floats.dat)" if float_wav_pairs else ""
-        print(f"  LIP files  : {lip_ok} MFA generated  ({lip_fail} failed){float_note}")
+        lip_row = f"{lip_ok} generated, {lip_fail} failed"
+        if float_wav_pairs:
+            lip_row += f" (+{len(float_wav_pairs)} float LIP in vock_floats.dat)"
+        rows.append(("LIP", lip_row))
     else:
-        print("  LIP files  : skipped")
+        rows.append(("LIP", "skipped"))
+    if n_unknown:
+        rows.append(("Unknown words", f"{n_unknown}  → unknown.txt"))
     if "dat" in run:
-        print(f"  DAT file   : {datfile}")
-        if float_stems:
-            print(f"  Float DAT  : {float_datfile}")
+        if os.path.isfile(datfile):
+            rows.append(("vock.dat",
+                         f"{_fmt_size(os.path.getsize(datfile) / 1024)}   {datfile}"))
+        if float_stems and os.path.isfile(float_datfile):
+            rows.append(("vock_floats.dat",
+                         f"{_fmt_size(os.path.getsize(float_datfile) / 1024)}   {float_datfile}"))
     else:
-        print(f"  DAT file   : skipped")
+        rows.append(("DAT", "skipped"))
 
+    print_summary("DONE", rows, duration=time.monotonic() - _start)
     print_problem_recap()
     print()
 
