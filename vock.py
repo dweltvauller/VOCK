@@ -13,7 +13,7 @@ PIPELINE
   wav ────────[snd2acm / wine]──────────────► acm
   wav + txt ──[MFA]─────────────────────────► textgrid
   textgrid ─────────────────────────────────► lip
-  msg + acm + lip + txt + int ──────────────► dat/vock.dat
+  msg + acm + lip + txt + int + art ────────► dat/vock.dat
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FOLDER STRUCTURE (all created automatically)
@@ -27,6 +27,7 @@ FOLDER STRUCTURE (all created automatically)
   ./textgrid/     ← generated: MFA TextGrid files
   ./lip/          ← generated: Fallout 2 LIP files
   ./scripts/      ← put pre-compiled Fallout 2 .INT script files here (packed into dat as scripts\*)
+  ./art/          ← put art assets here, e.g. art/heads/*.FRM (packed into dat as art\*)
   ./unknown.txt   ← generated: words not recognized by the dictionary
   ./dat/vock.dat  ← generated: ready-to-install Fallout 2 DAT archive
 
@@ -39,7 +40,7 @@ STEPS  (run with --steps or skip with --skip)
   acm   wav/ → ACM via snd2acm.exe
   mfa   MFA forced alignment → textgrid/
   lip   textgrid/ → lip/
-  dat   Pack msg/ + acm/ + lip/ + txt/ → dat/vock.dat
+  dat   Pack msg/ + acm/ + lip/ + txt/ + scripts/ + art/ → dat/vock.dat
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 USAGE
@@ -662,7 +663,7 @@ def _npc_folder(stem: str) -> str:
 def collect_dat_entries(msg_paths, acm_dir, lip_dir, txt_dir,
                         include_acm=True, only_stems=None,
                         include_msg=True, discover_from="lip",
-                        int_dir=None):
+                        int_dir=None, art_dir=None):
     """
     Build [(dat_path, local_path), …] pairs with backslash separators.
 
@@ -670,6 +671,9 @@ def collect_dat_entries(msg_paths, acm_dir, lip_dir, txt_dir,
     include_msg  : whether to include MSG files (set False for the float DAT).
     discover_from: "lip" — find stems via lip/ dir (default, for talking-head DAT).
                    "acm" — find stems via acm/ dir (for float DAT, which has no LIP files).
+    int_dir      : folder of pre-compiled .INT scripts → packed as scripts\\*.
+    art_dir      : folder of art assets (e.g. art_dir/heads/*.FRM) → packed as
+                   art\\<subpath>, preserving the sub-folder layout under art_dir.
     """
     entries = []
 
@@ -720,6 +724,14 @@ def collect_dat_entries(msg_paths, acm_dir, lip_dir, txt_dir,
         for f in sorted(os.listdir(int_dir)):
             if f.lower().endswith(".int"):
                 entries.append((f"scripts\\{f.lower()}", os.path.join(int_dir, f)))
+
+    # Art assets (e.g. art/heads/*.FRM) → art\<subpath>, sub-folders preserved
+    if art_dir and os.path.isdir(art_dir):
+        for root, _dirs, files in os.walk(art_dir):
+            for f in sorted(files):
+                local_path = os.path.join(root, f)
+                rel = os.path.relpath(local_path, art_dir).replace(os.sep, "\\")
+                entries.append((f"art\\{rel.lower()}", local_path))
 
     return entries
 
@@ -859,6 +871,7 @@ def main():
     datfile          = resolve_path(paths["dat"])
     float_datfile    = resolve_path(paths.get("float_dat", "./dat/vock_floats.dat"))
     intdir           = resolve_path(paths.get("scripts", "./scripts"))
+    artdir           = resolve_path(paths.get("art", "./art"))
     snd2acm_cfg      = resolve_path(paths["snd2acm"])
     npc_filter_file  = resolve_path(paths.get("npc_filter"))    # optional key; None if absent
     settings    = config["settings"]
@@ -1262,6 +1275,7 @@ def main():
                 include_msg  = True,
                 discover_from = "lip",
                 int_dir      = intdir,
+                art_dir      = artdir,
             )
             if not dat_entries:
                 print("  No files to pack — skipping.")
@@ -1288,6 +1302,7 @@ def main():
                     include_msg   = False,
                     discover_from = "acm",
                     int_dir       = None,      # INT scripts go in vock.dat only
+                    art_dir       = None,      # art assets go in vock.dat only
                 )
                 if not float_entries:
                     print("  No float ACM files found — run the 'acm' step first.")

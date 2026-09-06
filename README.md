@@ -11,7 +11,7 @@ A Python script that automates the complete voice modding pipeline for Fallout 2
   wav ────────[snd2acm / wine]──────────────► acm
   wav + txt ──[MFA]─────────────────────────► textgrid
   textgrid ──────────────────────────────────► lip  (floats: ACM only, no LIP)
-  msg + acm + lip + txt + scripts ────────────► dat/vock.dat
+  msg + acm + lip + txt + scripts + art ──────► dat/vock.dat
                                                dat/vock_floats.dat  (if floats defined)
 ```
 
@@ -31,6 +31,7 @@ vock/
 ├── msg/                  ← put your .MSG file(s) here
 ├── audio/                ← put your audio files here (MP3, WAV, FLAC, M4A, …)
 ├── scripts/              ← put pre-compiled .INT script files here (packed as scripts\*)
+├── art/                  ← put art assets here, e.g. art/heads/*.FRM (packed as art\*)
 ├── txt/                  ← generated/editable: one .txt per audio line
 ├── wav/                  ← generated: 22050 Hz mono 16-bit PCM
 ├── acm/                  ← generated: Fallout 2 ACM audio files
@@ -69,7 +70,7 @@ Note: [ARPAbet](https://en.wikipedia.org/wiki/ARPABET) is a unique, English-spec
 | `acm` | `wav/*.wav`        | `acm/*.acm`    | Convert to Fallout 2 ACM via `snd2acm.exe`       |
 | `mfa` | `wav/` + `txt/`    | `textgrid/`    | MFA forced alignment → phoneme timing            |
 | `lip` | `textgrid/`        | `lip/*.lip`    | Generate Fallout 2 LIP files (floats skipped)    |
-| `dat` | `msg/`+`acm/`+`lip/`+`txt/`+`scripts/` | `dat/vock.dat`        | Pack talking-head files into a Fallout 2 DAT2 archive |
+| `dat` | `msg/`+`acm/`+`lip/`+`txt/`+`scripts/`+`art/` | `dat/vock.dat`        | Pack talking-head files into a Fallout 2 DAT2 archive |
 | `dat` | `acm/` (float stems only)           | `dat/vock_floats.dat` | Pack float audio into a separate DAT2 archive (only runs if floats are defined) |
 
 ## Output DAT structure
@@ -80,6 +81,7 @@ sound\speech\<npc>\*.acm
 sound\speech\<npc>\*.lip
 sound\speech\<npc>\*.txt
 scripts\*.int
+art\heads\*.frm
 ```
 
 Where `<npc>` is derived automatically from the audio tag, e.g.:
@@ -292,6 +294,7 @@ All global settings, file paths, and environment configurations are managed in `
   - `mfa_lock`: points to `mfa_lock.cfg` — audio tags whose existing TextGrid `mfa` must never regenerate.
   - `float_dat`: output path for the float DAT archive (default: `./dat/vock_floats.dat`).
   - `scripts`: folder of pre-compiled `.INT` script files to pack into the DAT as `scripts\*`.
+  - `art`: folder of art assets to pack into `vock.dat` as `art\*`. Sub-folders are preserved, so `art/heads/foo.FRM` → `art\heads\foo.frm`. Talking-head DAT only (not the float DAT).
   - `rpu_text`: path into the sibling RPU repo (default: `../rpu/data/text`) used by `tools/msg_localize.py`. Unlike the other `[paths]` entries, it resolves against `vock.cfg`'s own folder, not `project_root` — the RPU repo is shared infrastructure next to `vock/`, not part of whichever project `project_root` points at.
   - `loc`: output folder for localization tooling (see [Tools](#tools) below) — tagged foreign-language MSGs and rebuilt localized DATs.
 - `[settings]`:
