@@ -1,4 +1,4 @@
-# V.O.C.K. — Vocal Output Creation Kit
+# V.O.C.K. Vocal Output Creation Kit
 
 A Python script that automates the complete voice modding pipeline for Fallout 2. Give it `.msg` dialogue file(s) and a folder of audio files — it produces a ready-to-install `vock.dat` containing ACM audio, LIP sync, and dialogue files.
 
